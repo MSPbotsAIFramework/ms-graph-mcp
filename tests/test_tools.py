@@ -893,7 +893,7 @@ async def test_send_mail_accepts_common_base64_variants(variant):
 async def test_send_mail_encodes_content_text_attachment():
     import base64
 
-    html = "<html><body><h1>月度报告</h1></body></html>"
+    html = "<html><body><h1>Monthly Report</h1></body></html>"
     mcp, client = _mail_mcp({})
     result = await _send(mcp, attachments=[{"filename": "report.html", "content_text": html}])
     assert result == {"status": "sent"}
@@ -907,7 +907,7 @@ async def test_send_mail_encodes_content_text_attachment():
 async def test_send_mail_content_text_counts_utf8_bytes_against_limit():
     mcp, client = _mail_mcp({})
     # 166,667 three-byte chars = 500,001 bytes > 500 KB, though under 500k chars.
-    result = await _send(mcp, attachments=[{"filename": "big.txt", "content_text": "报" * 166_667}])
+    result = await _send(mcp, attachments=[{"filename": "big.txt", "content_text": "€" * 166_667}])
     assert result["error"]["code"] == "invalid_argument"
     assert "per-file" in result["error"]["message"]
     assert client.calls == []
@@ -1044,8 +1044,8 @@ async def test_read_attachment_csv_and_text():
     )
     assert payload["rows"] == [["name", "qty"], ["widget", "3"]]
 
-    payload, _ = await _read_attachment(_file_meta("notes.txt"), "hello 你好".encode())
-    assert payload["content"] == "hello 你好"
+    payload, _ = await _read_attachment(_file_meta("notes.txt"), "hello wörld".encode())
+    assert payload["content"] == "hello wörld"
 
 
 @pytest.mark.asyncio
