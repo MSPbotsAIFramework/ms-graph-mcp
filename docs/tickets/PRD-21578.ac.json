@@ -6,7 +6,9 @@
     "type": "auto",
     "tests": [
       "ms-graph-mcp::tests/test_tools.py::test_delete_message_with_explicit_user_id"
-    ]
+    ],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_delete_message_with_explicit_user_id -q @ dev/PRD-21578 4224583 -- 1 passed"
   },
   {
     "id": "TC2",
@@ -15,7 +17,9 @@
     "type": "auto",
     "tests": [
       "ms-graph-mcp::tests/test_tools.py::test_delete_message_defaults_to_me"
-    ]
+    ],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_delete_message_defaults_to_me -q @ dev/PRD-21578 4224583 -- 1 passed"
   },
   {
     "id": "TC3",
@@ -24,7 +28,9 @@
     "type": "auto",
     "tests": [
       "ms-graph-mcp::tests/test_tools.py::test_delete_message_is_idempotent_on_404"
-    ]
+    ],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_delete_message_is_idempotent_on_404 -q @ dev/PRD-21578 4224583 -- 1 passed"
   },
   {
     "id": "TC4",
@@ -33,7 +39,9 @@
     "type": "auto",
     "tests": [
       "ms-graph-mcp::tests/test_tools.py::test_delete_message_surfaces_non_404_error"
-    ]
+    ],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_delete_message_surfaces_non_404_error -q @ dev/PRD-21578 4224583 -- 1 passed; payload['error']['code'] == 'unauthorized' (403 maps to unauthorized per api_client._STATUS_TO_CODE), 'deleted' absent"
   },
   {
     "id": "TC5",
@@ -43,7 +51,9 @@
     "tests": [
       "ms-graph-mcp::tests/test_tools.py::test_tools_list_snapshot (EXPECTED_TOOLS entry for graph_delete_message)",
       "ms-graph-mcp::tests/test_tools.py::test_delete_message_annotations"
-    ]
+    ],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_tools_list_snapshot tests/test_tools.py::test_delete_message_annotations -q @ dev/PRD-21578 4224583 -- 2 passed; live tools/list smoke (POST /mcp initialize+tools/list with placeholder X-Ms-Graph-Token) shows graph_delete_message among 46 tools"
   },
   {
     "id": "TC6",
@@ -52,7 +62,9 @@
     "type": "auto",
     "tests": [
       "ms-graph-mcp::tests/test_gdap_role_map.py"
-    ]
+    ],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_gdap_role_map.py -q @ dev/PRD-21578 4224583 -- 4 passed; role-map count bumped 45 -> 46 to match"
   },
   {
     "id": "TC7",
@@ -66,7 +78,7 @@
       "Confirm in Outlook/OWA that the message moved to Deleted Items"
     ],
     "expect": "graph_delete_message returns {\"deleted\": true}; the test message is visible in Deleted Items, not the original folder",
-    "result": "untested",
-    "evidence": ""
+    "result": "not_run",
+    "evidence": "No real Microsoft 365 tenant / test mailbox with a Microsoft Graph connection was available in this dev environment during the self-test leg. Not a blocker per mcp-track.md 2.5/3 (missing a real vendor account does not block this track). Recorded in README Known Gaps for real-tenant verification before go-live."
   }
 ]
