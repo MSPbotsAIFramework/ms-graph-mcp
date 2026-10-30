@@ -4,70 +4,90 @@
     "ac": "AC1",
     "text": "Given a role-assignable group's id, When graph_get_group is called in the Microsoft Graph connector, Then the response includes isAssignableToRole: true.",
     "type": "auto",
-    "tests": ["tests/test_tools.py::test_get_group_returns_is_assignable_to_role_true_for_role_assignable_group"]
+    "tests": ["tests/test_tools.py::test_get_group_returns_is_assignable_to_role_true_for_role_assignable_group"],
+    "result": "pass",
+    "evidence": "uv run pytest -v -k test_get_group_returns_is_assignable_to_role_true_for_role_assignable_group (ms-graph-mcp dev/PRD-21676 @ bf2ffcb): 1 passed"
   },
   {
     "id": "TC2",
     "ac": "AC2",
     "text": "Given an ordinary group's id, When graph_get_group is called in the Microsoft Graph connector, Then isAssignableToRole is not true (Graph's raw value, typically null, is passed through unchanged).",
     "type": "auto",
-    "tests": ["tests/test_tools.py::test_get_group_passes_through_null_is_assignable_to_role_for_ordinary_group"]
+    "tests": ["tests/test_tools.py::test_get_group_passes_through_null_is_assignable_to_role_for_ordinary_group"],
+    "result": "pass",
+    "evidence": "uv run pytest -v -k test_get_group_passes_through_null_is_assignable_to_role_for_ordinary_group (ms-graph-mcp dev/PRD-21676 @ bf2ffcb): 1 passed"
   },
   {
     "id": "TC3",
     "ac": "AC3",
     "text": "Given a role-assignable group in a GDAP customer tenant, When graph_get_group is called with that tenant's customer_tenant_id, Then the response includes isAssignableToRole: true.",
     "type": "auto",
-    "tests": ["tests/test_flows.py::test_get_group_returns_is_assignable_to_role_true_for_role_assignable_group"]
+    "tests": ["tests/test_flows.py::test_get_group_returns_is_assignable_to_role_true_for_role_assignable_group"],
+    "result": "pass",
+    "evidence": "uv run pytest -v -k test_get_group_returns_is_assignable_to_role_true_for_role_assignable_group (gdap-mcp dev/PRD-21676 @ 1de8faf, real PostgreSQL via throwaway gdap-test-pg container): 1 passed"
   },
   {
     "id": "TC4",
     "ac": "AC3",
     "text": "Given an ordinary group in the same GDAP customer tenant, When graph_get_group is called with that customer_tenant_id, Then isAssignableToRole is not true.",
     "type": "auto",
-    "tests": ["tests/test_flows.py::test_get_group_passes_through_null_is_assignable_to_role_for_ordinary_group"]
+    "tests": ["tests/test_flows.py::test_get_group_passes_through_null_is_assignable_to_role_for_ordinary_group"],
+    "result": "pass",
+    "evidence": "uv run pytest -v -k test_get_group_passes_through_null_is_assignable_to_role_for_ordinary_group (gdap-mcp dev/PRD-21676 @ 1de8faf, real PostgreSQL): 1 passed"
   },
   {
     "id": "TC5",
     "ac": "AC4",
     "text": "Given graph_get_group is called in the Microsoft Graph connector, When the response is compared to today's shape, Then mailEnabled, securityEnabled, groupTypes, onPremisesSyncEnabled and sync_source are all still present and correct, alongside the new isAssignableToRole.",
     "type": "auto",
-    "tests": ["tests/test_tools.py::test_get_group_keeps_existing_classification_fields_unchanged"]
+    "tests": ["tests/test_tools.py::test_get_group_keeps_existing_classification_fields_unchanged"],
+    "result": "pass",
+    "evidence": "uv run pytest -v -k test_get_group_keeps_existing_classification_fields_unchanged (ms-graph-mcp dev/PRD-21676 @ bf2ffcb): 1 passed; full suite 184 passed, 0 failed (baseline 179 pre-merge + 5 from PRD-21391 merge, no new failures)"
   },
   {
     "id": "TC6",
     "ac": "AC4",
     "text": "Given graph_get_group is called in the Microsoft 365 GDAP connector, When the response is compared to today's shape, Then mailEnabled, securityEnabled, groupTypes, onPremisesSyncEnabled and sync_source are all still present and correct, alongside the new isAssignableToRole.",
     "type": "auto",
-    "tests": ["tests/test_flows.py::test_get_group_keeps_existing_classification_fields_unchanged"]
+    "tests": ["tests/test_flows.py::test_get_group_keeps_existing_classification_fields_unchanged"],
+    "result": "pass",
+    "evidence": "uv run pytest -v -k test_get_group_keeps_existing_classification_fields_unchanged (gdap-mcp dev/PRD-21676 @ 1de8faf, real PostgreSQL): 1 passed; full suite 117 passed, 0 failed (baseline 112 + 5 new, no regressions)"
   },
   {
     "id": "TC7",
     "ac": "AC5",
     "text": "Given a user who belongs to one role-assignable and one ordinary group, When graph_list_user_groups is called for that user in the Microsoft Graph connector, Then both group entries include the correct isAssignableToRole.",
     "type": "auto",
-    "tests": ["tests/test_tools.py::test_list_user_groups_includes_is_assignable_to_role_per_group"]
+    "tests": ["tests/test_tools.py::test_list_user_groups_includes_is_assignable_to_role_per_group"],
+    "result": "pass",
+    "evidence": "uv run pytest -v -k test_list_user_groups_includes_is_assignable_to_role_per_group (ms-graph-mcp dev/PRD-21676 @ bf2ffcb): 1 passed"
   },
   {
     "id": "TC8",
     "ac": "AC5",
     "text": "Given a user who belongs to one role-assignable and one ordinary group, When graph_list_user_groups is called for that user in the Microsoft 365 GDAP connector with customer_tenant_id, Then both group entries include the correct isAssignableToRole.",
     "type": "auto",
-    "tests": ["tests/test_flows.py::test_list_user_groups_includes_is_assignable_to_role_per_group"]
+    "tests": ["tests/test_flows.py::test_list_user_groups_includes_is_assignable_to_role_per_group"],
+    "result": "pass",
+    "evidence": "uv run pytest -v -k test_list_user_groups_includes_is_assignable_to_role_per_group (gdap-mcp dev/PRD-21676 @ 1de8faf, real PostgreSQL): 1 passed"
   },
   {
     "id": "TC9",
     "ac": "AC6",
     "text": "Given graph_list_user_groups is called across two pages in the Microsoft Graph connector, When the responses are compared to today's shape, Then has_more/next_page_token pagination and sync_source derivation are unchanged, alongside the new isAssignableToRole on every entry.",
     "type": "auto",
-    "tests": ["tests/test_tools.py::test_list_user_groups_paginates_with_skiptoken"]
+    "tests": ["tests/test_tools.py::test_list_user_groups_paginates_with_skiptoken"],
+    "result": "pass",
+    "evidence": "Pre-existing test, unmodified; still passes unchanged after isAssignableToRole was added to graph_list_user_groups's $select -- proves the field addition does not disturb pagination. uv run pytest -v -k test_list_user_groups_paginates_with_skiptoken (ms-graph-mcp dev/PRD-21676 @ bf2ffcb): 1 passed"
   },
   {
     "id": "TC10",
     "ac": "AC7",
     "text": "Given two different GDAP customer tenants each with their own role-assignable/ordinary groups, When graph_get_group and graph_list_user_groups are each called once per tenant with that tenant's customer_tenant_id, Then each call's isAssignableToRole values reflect only that tenant's own groups.",
     "type": "auto",
-    "tests": ["tests/test_flows.py::test_is_assignable_to_role_does_not_leak_across_customer_tenants"]
+    "tests": ["tests/test_flows.py::test_is_assignable_to_role_does_not_leak_across_customer_tenants"],
+    "result": "pass",
+    "evidence": "uv run pytest -v -k test_is_assignable_to_role_does_not_leak_across_customer_tenants (gdap-mcp dev/PRD-21676 @ 1de8faf, real PostgreSQL): 1 passed"
   },
   {
     "id": "TC11",
@@ -80,7 +100,7 @@
       "Call graph_get_group against the same group through the Microsoft 365 GDAP connector with customer_tenant_id=2qmxyw"
     ],
     "expect": "Both calls return isAssignableToRole: true for the known role-assignable group.",
-    "result": "untested",
-    "evidence": ""
+    "result": "blocked",
+    "evidence": "Not executable in the dev leg: no live/sandbox tenant access from this environment, and the role-assignable test group's creation is tracked as a prerequisite under PRD-21647, not this ticket. Per references/mcp-track.md, a missing vendor/test account does not block 6b -- deferred to INT acceptance (manual QA on test tenant 2qmxyw) once the prerequisite group exists."
   }
 ]
