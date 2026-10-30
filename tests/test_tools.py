@@ -67,6 +67,7 @@ EXPECTED_TOOLS = {
     "graph_transfer_onedrive": {"source_user_id", "recipient_user_id"},
     "graph_start_cloud_sync": {"user_id"},
     "graph_list_gdap_roles": set(),
+    "graph_list_named_locations": set(),
 }
 
 # Tools that are not plain read-only queries (writes / mutations).
@@ -161,13 +162,19 @@ async def test_tools_list_snapshot():
     # assignments (graph_list_user_groups deliberately excludes them, see its
     # own /memberOf comment), so this is a distinct endpoint, not a mode flag
     # on an existing tool.
+    # +1 for graph_list_named_locations (PRD-21580, Rewst gap register item
+    # 12): no existing tool reads identity/conditionalAccess/namedLocations,
+    # so resolving a CA policy's location id to its IP ranges/countries is a
+    # distinct endpoint; the by-id and no-id-list cases are collapsed into
+    # one optional-parameter tool rather than split (see graph_list_domains,
+    # which has no id parameter for the same "small, bounded resource" reason).
     # +1 for graph_delete_message (PRD-21578): Ginko IT's malicious-email-removal
     # Rewst flow needs to delete one already-identified message by id; the
     # mail domain's three existing tools are read/send only, and this follows
     # the same idempotent-delete pattern as graph_delete_file/
     # graph_remove_managed_device rather than overloading graph_get_message
     # with a destructive mode flag.
-    assert len(names) <= 46, "tool count should stay within SOP's <=20 guideline (+26 justified)"
+    assert len(names) <= 47, "tool count should stay within SOP's <=20 guideline (+27 justified)"
 
     by_name = {t.name: t for t in tools}
     for name, expected_required in EXPECTED_TOOLS.items():
@@ -3916,3 +3923,156 @@ async def test_graph_list_user_roles_unknown_user_returns_404_envelope():
 
     assert result["error"]["code"] == "not_found"
     assert result["error"]["retryable"] is False
+
+
+# --- PRD-21580: graph_list_named_locations -----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_named_locations_by_id_shapes_ip_location():
+    """TC1/AC1: an ipNamedLocation response must come back with a derived
+    location_type="ip" field, keeping ipRanges/isTrusted unchanged."""
+    from graph_mcp.tools import conditional_access
+
+    mcp, client = _register(conditional_access)
+    client._result = {
+        "id": "loc-1",
+        "displayName": "Corporate network",
+        "@odata.type": "#microsoft.graph.ipNamedLocation",
+        "isTrusted": True,
+        "ipRanges": [{"@odata.type": "#microsoft.graph.iPv4CidrRange", "cidrAddress": "203.0.113.0/24"}],
+    }
+    result = json.loads(
+        (await mcp.call_tool("graph_list_named_locations", {"location_id": "loc-1"}))[0][0].text
+    )
+
+    assert client.calls[0][0] == "/identity/conditionalAccess/namedLocations/loc-1"
+    assert result["location_type"] == "ip"
+    assert result["isTrusted"] is True
+    assert result["ipRanges"] == [
+        {"@odata.type": "#microsoft.graph.iPv4CidrRange", "cidrAddress": "203.0.113.0/24"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_list_named_locations_by_id_shapes_country_location():
+    """TC2/AC2: a countryNamedLocation response must come back with
+    location_type="country", keep countriesAndRegions, and must not
+    fabricate an isTrusted key that only applies to IP locations."""
+    from graph_mcp.tools import conditional_access
+
+    mcp, client = _register(conditional_access)
+    client._result = {
+        "id": "loc-2",
+        "displayName": "Blocked countries",
+        "@odata.type": "#microsoft.graph.countryNamedLocation",
+        "countriesAndRegions": ["CU", "IR", "KP"],
+        "includeUnknownCountriesAndRegions": False,
+    }
+    result = json.loads(
+        (await mcp.call_tool("graph_list_named_locations", {"location_id": "loc-2"}))[0][0].text
+    )
+
+    assert result["location_type"] == "country"
+    assert result["countriesAndRegions"] == ["CU", "IR", "KP"]
+    assert "isTrusted" not in result
+
+
+@pytest.mark.asyncio
+async def test_list_named_locations_without_id_lists_all():
+    """TC3/AC3: with no location_id, the request must hit the collection
+    endpoint (no id segment) and the result must contain every location
+    returned, each shaped with a location_type."""
+    from graph_mcp.tools import conditional_access
+
+    mcp, client = _register(conditional_access)
+    client._result = {
+        "value": [
+            {
+                "id": "loc-1",
+                "displayName": "Corporate network",
+                "@odata.type": "#microsoft.graph.ipNamedLocation",
+                "isTrusted": True,
+                "ipRanges": [],
+            },
+            {
+                "id": "loc-2",
+                "displayName": "Blocked countries",
+                "@odata.type": "#microsoft.graph.countryNamedLocation",
+                "countriesAndRegions": ["CU"],
+            },
+        ]
+    }
+    result = json.loads((await mcp.call_tool("graph_list_named_locations", {}))[0][0].text)
+
+    assert client.calls[0][0] == "/identity/conditionalAccess/namedLocations"
+    assert result["count"] == 2
+    types = {loc["id"]: loc["location_type"] for loc in result["named_locations"]}
+    assert types == {"loc-1": "ip", "loc-2": "country"}
+    assert result["has_more"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_named_locations_without_id_reports_has_more():
+    """TC4/AC4: a collection response carrying @odata.nextLink must come
+    back with has_more=true and a next_page_token (the $skiptoken, not the
+    full URL — same contract as graph_list_group_members), and must not
+    return more than the connector's cap worth of items in one call."""
+    from graph_mcp.tools import conditional_access
+
+    mcp, client = _register(conditional_access)
+    client._result = {
+        "value": [{"id": f"loc-{i}", "@odata.type": "#microsoft.graph.ipNamedLocation"} for i in range(3)],
+        "@odata.nextLink": "https://graph.microsoft.com/v1.0/identity/conditionalAccess/namedLocations?$skiptoken=page2",
+    }
+    result = json.loads(
+        (await mcp.call_tool("graph_list_named_locations", {"max_results": 2}))[0][0].text
+    )
+
+    assert result["has_more"] is True
+    assert result["next_page_token"] == "page2"
+    assert len(result["named_locations"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_list_named_locations_unknown_id_returns_not_found_envelope():
+    """TC5/AC5: an unknown/deleted location_id must come back as the
+    structured not_found envelope, not an exception propagating out of the
+    tool call."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import conditional_access
+
+    class _NotFoundClient:
+        async def get(self, path: str, params=None, extra_headers=None):
+            raise GraphError(404, "Resource 'bad-loc' does not exist.")
+
+    mcp = FastMCP(name="test")
+    conditional_access.register(mcp, lambda: _NotFoundClient())
+
+    result = json.loads(
+        (await mcp.call_tool("graph_list_named_locations", {"location_id": "bad-loc"}))[0][0].text
+    )
+
+    assert result["error"]["code"] == "not_found"
+    assert result["error"]["retryable"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_named_locations_without_token_returns_no_token_envelope():
+    """TC6/AC6: missing X-Ms-Graph-Token (client_factory() -> None) must
+    return the connector's standard NO_TOKEN envelope, with or without
+    location_id -- identical to every other tool's behavior."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import conditional_access
+    from graph_mcp.tools._common import NO_TOKEN
+
+    mcp = FastMCP(name="test")
+    conditional_access.register(mcp, lambda: None)
+
+    result_by_id = (await mcp.call_tool("graph_list_named_locations", {"location_id": "loc-1"}))[0][0].text
+    result_list = (await mcp.call_tool("graph_list_named_locations", {}))[0][0].text
+
+    assert result_by_id == NO_TOKEN
+    assert result_list == NO_TOKEN

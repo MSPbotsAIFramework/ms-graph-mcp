@@ -114,6 +114,7 @@ def create_mcp_server(settings: Settings) -> FastMCP:
 
     from .tools import (
         calendar,
+        conditional_access,
         devices,
         domains,
         gdap_roles,
@@ -135,5 +136,6 @@ def create_mcp_server(settings: Settings) -> FastMCP:
     calendar.register(mcp, client_factory)
     offboarding.register(mcp, client_factory)
     gdap_roles.register(mcp, client_factory)
+    conditional_access.register(mcp, client_factory)
 
     return mcp
