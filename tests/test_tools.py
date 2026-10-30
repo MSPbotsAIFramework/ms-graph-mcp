@@ -3600,6 +3600,105 @@ async def test_send_mail_logs_attachment_metadata(fetch, caplog):
     assert "source=url" in caplog.text
 
 
+# --- PRD-21676: isAssignableToRole on graph_get_group / graph_list_user_groups ---
+
+
+@pytest.mark.asyncio
+async def test_get_group_returns_is_assignable_to_role_true_for_role_assignable_group():
+    """AC1/TC1: a role-assignable group's graph_get_group response must
+    include isAssignableToRole: true, and the field must be requested via
+    $select."""
+    from graph_mcp.tools import groups
+
+    mcp, client = _register(groups)
+    client._result = {"id": "g1", "mailEnabled": False, "isAssignableToRole": True}
+    result = json.loads(
+        (await mcp.call_tool("graph_get_group", {"group_id": "g1"}))[0][0].text
+    )
+
+    assert result["isAssignableToRole"] is True
+    assert "isAssignableToRole" in client.calls[0][1]["$select"]
+
+
+@pytest.mark.asyncio
+async def test_get_group_passes_through_null_is_assignable_to_role_for_ordinary_group():
+    """AC2/TC2: Graph returns null (not false) for a group that was never
+    provisioned as role-assignable; the tool must pass that raw value
+    through unchanged rather than coercing it to false."""
+    from graph_mcp.tools import groups
+
+    mcp, client = _register(groups)
+    client._result = {"id": "g2", "mailEnabled": False, "isAssignableToRole": None}
+    result = json.loads(
+        (await mcp.call_tool("graph_get_group", {"group_id": "g2"}))[0][0].text
+    )
+
+    assert result["isAssignableToRole"] is None
+    assert result["isAssignableToRole"] is not True
+
+
+@pytest.mark.asyncio
+async def test_get_group_keeps_existing_classification_fields_unchanged():
+    """AC4/TC5: adding isAssignableToRole must not disturb the other
+    classification fields graph_get_group already returns (mailEnabled,
+    securityEnabled, groupTypes, onPremisesSyncEnabled, sync_source)."""
+    from graph_mcp.tools import groups
+
+    mcp, client = _register(groups)
+    client._result = {
+        "id": "g1",
+        "groupTypes": ["Unified"],
+        "securityEnabled": True,
+        "mailEnabled": True,
+        "onPremisesSyncEnabled": True,
+        "isAssignableToRole": True,
+    }
+    result = json.loads(
+        (await mcp.call_tool("graph_get_group", {"group_id": "g1"}))[0][0].text
+    )
+
+    assert result["mailEnabled"] is True
+    assert result["securityEnabled"] is True
+    assert result["groupTypes"] == ["Unified"]
+    assert result["onPremisesSyncEnabled"] is True
+    assert result["sync_source"] == "on-premises"
+    assert result["isAssignableToRole"] is True
+
+
+@pytest.mark.asyncio
+async def test_list_user_groups_includes_is_assignable_to_role_per_group():
+    """AC5/TC7: every entry graph_list_user_groups returns must carry the
+    correct isAssignableToRole for that specific group, and the field must
+    be requested via $select."""
+    from graph_mcp.tools import groups
+
+    mcp, client = _register(groups)
+    client._result = {
+        "value": [
+            {
+                "id": "g1",
+                "groupTypes": [],
+                "mailEnabled": False,
+                "isAssignableToRole": True,
+            },
+            {
+                "id": "g2",
+                "groupTypes": [],
+                "mailEnabled": False,
+                "isAssignableToRole": None,
+            },
+        ]
+    }
+    result = json.loads(
+        (await mcp.call_tool("graph_list_user_groups", {"user_id": "u1"}))[0][0].text
+    )
+
+    by_id = {g["id"]: g for g in result["groups"]}
+    assert by_id["g1"]["isAssignableToRole"] is True
+    assert by_id["g2"]["isAssignableToRole"] is None
+    assert "isAssignableToRole" in client.calls[0][1]["$select"]
+
+
 # --- PRD-21391: graph_list_user_roles ---------------------------------------
 
 
