@@ -187,3 +187,11 @@ graph_list_gdap_roles:
   note: 'Meta tool: serves this file''s own contents (PRD-21193); not itself a client-tenant
     action, so it carries no role of its own -- included here so the registered-tools/yaml/README
     three-way consistency check (AC7) has no silent exception.'
+graph_list_named_locations:
+  roles:
+  - Security Reader
+  note: Read-only; resolves a conditional-access named location id (or lists all)
+    to its IP ranges or countries (PRD-21580). Role assumed as the narrowest
+    purpose-built role for Policy.Read.All over conditionalAccess/namedLocations;
+    not verified against a live tenant at design time (see ticket Open question Q1) --
+    only this metadata row needs correcting if wrong, no code/contract change.
