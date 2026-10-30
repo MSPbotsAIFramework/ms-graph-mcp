@@ -2,10 +2,13 @@
 
 Scope note: these tools cover one business flow — "what landed in this
 mailbox, what is it about, and does it need a reply": list/search messages,
-open one in full, read what an attachment says, send one. Moving, flagging,
-deleting, replying in place and folder management are deliberately not
-exposed — the read side exists to let an agent triage a mailbox and draft
-follow-ups, not to act as a mail client.
+open one in full, read what an attachment says, send one, and delete one
+already-identified message by id. Moving, flagging, replying in place and
+folder management are deliberately not exposed — the read side exists to
+let an agent triage a mailbox and draft follow-ups, and the one mutation
+exposed (delete-by-id) exists to let an agent remove a message it has
+already identified (e.g. a confirmed malicious email); this is not a
+general-purpose mail client.
 
 Attachments are read, not downloaded: the bytes are fetched and parsed here
 (spreadsheet -> rows, text -> string) and only the parsed content goes back.
@@ -885,3 +888,40 @@ def register(mcp: FastMCP, client_factory: Callable[[], GraphClient | None]) -> 
         if len(text) > _MAX_TEXT_CHARS:
             content.update(truncated=True, original_length=len(text))
         return dump_json_capped({"attachment": info, **content})
+
+    @mcp.tool(
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True)
+    )
+    async def graph_delete_message(
+        message_id: Annotated[
+            str,
+            Field(
+                description="Message id from graph_list_messages or graph_get_message — "
+                "never guess it, list/open first."
+            ),
+        ],
+        user_id: Annotated[str | None, Field(description=_USER_ID_DESC)] = None,
+    ) -> str:
+        """Delete one email from a mailbox.
+
+        Moves the message to the mailbox's Deleted Items folder — the same
+        result as pressing Delete in Outlook — it does not purge it outright.
+        Idempotent: deleting an already-deleted or nonexistent message_id
+        returns success, not an error. Confirm the exact message_id (from
+        graph_list_messages/graph_get_message) before calling — there is no
+        undo from this tool once called, only the normal Outlook
+        Deleted-Items recovery window.
+        """
+        client = client_factory()
+        if client is None:
+            return NO_TOKEN
+
+        base = f"/users/{user_id}" if user_id else "/me"
+        try:
+            await client.delete(f"{base}/messages/{message_id}")
+        except GraphError as e:
+            if e.status_code != 404:
+                return e.to_envelope()
+        return dump_json_capped(
+            {"user_id": user_id or "me", "message_id": message_id, "deleted": True}
+        )
