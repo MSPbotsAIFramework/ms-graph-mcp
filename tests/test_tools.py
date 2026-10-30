@@ -64,6 +64,7 @@ EXPECTED_TOOLS = {
     "graph_cancel_calendar_event": {"event_id"},
     "graph_transfer_onedrive": {"source_user_id", "recipient_user_id"},
     "graph_start_cloud_sync": {"user_id"},
+    "graph_list_gdap_roles": set(),
 }
 
 # Tools that are not plain read-only queries (writes / mutations).
@@ -147,7 +148,11 @@ async def test_tools_list_snapshot():
     # reflected by graph_list_owned_groups). preferred_language is a new
     # optional parameter on graph_create_user/graph_update_user, not a
     # new tool, so it does not add to this count.
-    assert len(names) <= 43, "tool count should stay within SOP's <=20 guideline (+23 justified)"
+    # +1 for graph_list_gdap_roles (PRD-21193): serves docs/gdap-role-map.yaml
+    # as structured JSON so the Agent Platform can read "which GDAP role does
+    # this tool need" without parsing the README; it is a read-only, static
+    # lookup, not a Graph-calling tool, so it does not fold into any existing one.
+    assert len(names) <= 44, "tool count should stay within SOP's <=20 guideline (+24 justified)"
 
     by_name = {t.name: t for t in tools}
     for name, expected_required in EXPECTED_TOOLS.items():

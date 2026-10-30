@@ -112,7 +112,18 @@ def create_mcp_server(settings: Settings) -> FastMCP:
 
     client_factory: Callable[[], GraphClient | None] = lambda: get_client_from_context(settings)
 
-    from .tools import calendar, devices, domains, groups, licenses, mail, offboarding, sites, users
+    from .tools import (
+        calendar,
+        devices,
+        domains,
+        gdap_roles,
+        groups,
+        licenses,
+        mail,
+        offboarding,
+        sites,
+        users,
+    )
 
     users.register(mcp, client_factory)
     groups.register(mcp, client_factory)
@@ -123,5 +134,6 @@ def create_mcp_server(settings: Settings) -> FastMCP:
     domains.register(mcp, client_factory)
     calendar.register(mcp, client_factory)
     offboarding.register(mcp, client_factory)
+    gdap_roles.register(mcp, client_factory)
 
     return mcp

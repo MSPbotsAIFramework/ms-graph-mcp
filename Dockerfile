@@ -38,6 +38,9 @@ WORKDIR /app
 # Copy virtual environment and source from builder
 COPY --from=builder --chown=graph:graph /app/.venv /app/.venv
 COPY --from=builder --chown=graph:graph /app/src /app/src
+# docs/gdap-role-map.yaml is read at runtime by graph_list_gdap_roles (PRD-21193);
+# only this one file ships, not the rest of docs/ (tickets/modules history).
+COPY --from=builder --chown=graph:graph /app/docs/gdap-role-map.yaml /app/docs/gdap-role-map.yaml
 
 # Put venv on PATH so `python -m graph_mcp` resolves correctly
 ENV PATH="/app/.venv/bin:$PATH"

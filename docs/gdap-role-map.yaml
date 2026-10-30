@@ -1,0 +1,185 @@
+# ms-graph-mcp GDAP role map.
+# One entry per tool this server registers (enforced by tests/test_gdap_role_map.py).
+# roles: null means no Entra role grants this capability -- see each entry's note.
+# PRD-21193.
+graph_check_user_exists:
+  roles:
+  - Directory Readers
+  note: Read-only directory lookup by UPN, email or proxy address.
+graph_list_users:
+  roles:
+  - Directory Readers
+  note: Read-only directory search by display name.
+graph_create_user:
+  roles:
+  - User Administrator
+  note: Creates a new Entra ID user account.
+graph_get_user:
+  roles:
+  - Directory Readers
+  note: 'Read-only: reads the full user profile, licenses and manager.'
+graph_update_user:
+  roles:
+  - User Administrator
+  note: Updating a privileged admin's profile or renaming their UPN needs Global Administrator
+    per Microsoft's GDAP task table; not modeled per-field here, see the ticket's
+    Open Questions.
+graph_reset_password:
+  roles:
+  - User Administrator
+  - Privileged Authentication Administrator
+  note: Any of; the second role is only needed when the target is a privileged admin.
+graph_revoke_sessions:
+  roles:
+  - User Administrator
+  - Privileged Authentication Administrator
+  note: Any of; same privileged-target nuance as graph_reset_password.
+graph_assign_manager:
+  roles:
+  - User Administrator
+  note: Sets the user's manager.
+graph_remove_manager:
+  roles:
+  - User Administrator
+  note: Clears the user's manager.
+graph_list_auth_methods:
+  roles:
+  - Authentication Administrator
+  note: 'Read-only: lists the user''s MFA methods.'
+graph_create_tap:
+  roles:
+  - Authentication Administrator
+  - Privileged Authentication Administrator
+  note: Any of; issues a Temporary Access Pass for the user.
+graph_assign_groups:
+  roles:
+  - User Administrator
+  note: Adds the user to one or more groups.
+graph_add_group_owner:
+  roles:
+  - User Administrator
+  note: Makes the user an owner of a group or Team.
+graph_list_user_groups:
+  roles:
+  - Directory Readers
+  note: 'Read-only: lists the groups a user belongs to.'
+graph_list_groups:
+  roles:
+  - Directory Readers
+  note: 'Read-only: searches Entra ID groups by display name.'
+graph_get_group:
+  roles:
+  - Directory Readers
+  note: 'Read-only: reads a single group''s details.'
+graph_list_group_members:
+  roles:
+  - Directory Readers
+  note: 'Read-only: pages through a group''s direct members.'
+graph_list_owned_groups:
+  roles:
+  - Directory Readers
+  note: 'Read-only: lists the groups a user owns.'
+graph_remove_group_member:
+  roles:
+  - User Administrator
+  note: Removes the user from one or more groups.
+graph_check_license_stock:
+  roles:
+  - License Administrator
+  note: 'Read-only: queries tenant license stock.'
+graph_assign_license:
+  roles:
+  - License Administrator
+  note: Assigns and/or removes license SKUs for a user.
+graph_reprocess_license:
+  roles:
+  - License Administrator
+  note: Re-runs group license assignment for a user.
+graph_list_domains:
+  roles:
+  - Directory Readers
+  note: 'Read-only: lists the tenant''s verified domains.'
+graph_send_mail:
+  roles: null
+  note: No Entra role grants delegated mail-send; gated by Mail.Send consent, not
+    a role.
+graph_list_messages:
+  roles: null
+  note: No Entra role grants mailbox content access; gated by Mail.Read consent, not
+    a role.
+graph_get_message:
+  roles: null
+  note: No Entra role grants mailbox content access; gated by Mail.Read consent, not
+    a role.
+graph_read_mail_attachment:
+  roles: null
+  note: No Entra role grants mailbox content access; gated by Mail.Read consent, not
+    a role.
+graph_search_sites:
+  roles:
+  - SharePoint Administrator
+  note: 'Read-only: searches SharePoint sites.'
+graph_list_drive_items:
+  roles:
+  - SharePoint Administrator
+  note: 'Read-only: lists files/folders in a document library.'
+graph_get_file:
+  roles:
+  - SharePoint Administrator
+  note: 'Read-only: gets file metadata and a download link.'
+graph_read_file_text:
+  roles:
+  - SharePoint Administrator
+  note: 'Read-only: reads a small plain-text file''s content.'
+graph_read_site_file_text:
+  roles:
+  - SharePoint Administrator
+  note: 'Read-only: resolves site+file name to content in one call.'
+graph_write_file_text:
+  roles:
+  - SharePoint Administrator
+  note: Overwrites an existing plain-text file's content.
+graph_create_file_text:
+  roles:
+  - SharePoint Administrator
+  note: Creates a new plain-text file.
+graph_delete_file:
+  roles:
+  - SharePoint Administrator
+  note: Deletes a file (moves it to the site recycle bin).
+graph_list_managed_devices:
+  roles:
+  - Intune Administrator
+  note: 'Read-only: lists a user''s Intune-managed devices.'
+graph_remove_managed_device:
+  roles:
+  - Intune Administrator
+  note: Deletes a device's Intune management record.
+graph_transfer_onedrive:
+  roles:
+  - SharePoint Administrator
+  note: README notes a site-collection-admin restriction under delegated auth; the
+    role alone may not suffice for this offboarding step, flagged as not modeled.
+graph_start_cloud_sync:
+  roles:
+  - Hybrid Identity Administrator
+  note: Triggers the tenant's Azure AD Connect cloud sync job.
+graph_list_calendar_events:
+  roles: null
+  note: No Entra role grants calendar content access; gated by Calendars.Read consent.
+graph_get_user_availability:
+  roles: null
+  note: No Entra role grants calendar content access; gated by Calendars.Read consent.
+graph_create_calendar_event:
+  roles: null
+  note: No Entra role grants calendar content access; gated by Calendars.ReadWrite
+    consent.
+graph_cancel_calendar_event:
+  roles: null
+  note: No Entra role grants calendar content access; gated by Calendars.ReadWrite
+    consent.
+graph_list_gdap_roles:
+  roles: null
+  note: 'Meta tool: serves this file''s own contents (PRD-21193); not itself a client-tenant
+    action, so it carries no role of its own -- included here so the registered-tools/yaml/README
+    three-way consistency check (AC7) has no silent exception.'
