@@ -1,0 +1,61 @@
+[
+  {
+    "id": "TC1",
+    "ac": "AC1",
+    "text": "Given a known Global Administrator's user_id in a connected Microsoft Graph tenant, When graph_list_user_roles(user_id) is called, Then the response's roles list includes an entry with display_name \"Global Administrator\" and classification \"active\"",
+    "type": "auto",
+    "tests": ["ms-graph-mcp::tests/test_tools.py::test_graph_list_user_roles_returns_active_global_admin"]
+  },
+  {
+    "id": "TC2",
+    "ac": "AC1",
+    "text": "Given a known Global Administrator's user_id in a customer tenant reached via GDAP, When graph_list_user_roles(customer_tenant_id, user_id) is called, Then the response's roles list includes an entry with display_name \"Global Administrator\"",
+    "type": "auto",
+    "tests": ["gdap-mcp::tests/test_flows.py::test_graph_list_user_roles_via_gdap_returns_active_global_admin"]
+  },
+  {
+    "id": "TC3",
+    "ac": "AC2",
+    "text": "Given graph_list_user_roles returns a non-empty roles list, When a returned entry is inspected, Then it carries display_name, classification, and scope (classification is \"active\" and scope is \"directory\" for every entry in this slice)",
+    "type": "auto",
+    "tests": ["ms-graph-mcp::tests/test_tools.py::test_graph_list_user_roles_entry_shape"]
+  },
+  {
+    "id": "TC4",
+    "ac": "AC3",
+    "text": "Given the ms-graph-mcp server's tool list, When graph_list_user_roles is inspected, Then it is registered with exactly one required parameter, user_id, and no customer_tenant_id (single-tenant connector)",
+    "type": "auto",
+    "tests": ["ms-graph-mcp::tests/test_tools.py::test_tools_list_snapshot (EXPECTED_TOOLS entry for graph_list_user_roles)"]
+  },
+  {
+    "id": "TC5",
+    "ac": "AC3",
+    "text": "Given the gdap-mcp server's tool list, When graph_list_user_roles is inspected, Then it is registered with customer_tenant_id as a required parameter in addition to user_id (mirrors every other ported Graph tool, e.g. graph_get_user)",
+    "type": "auto",
+    "tests": ["gdap-mcp::tests/test_http.py::test_graph_list_user_roles_requires_customer_tenant_id"]
+  },
+  {
+    "id": "TC6",
+    "ac": "AC4",
+    "text": "Given a full test run exercising graph_list_user_roles in both connectors (TC1/TC2/TC7/TC8), When the fake Microsoft Graph server's call log is inspected afterwards, Then it recorded zero PATCH/POST/DELETE requests attributable to this tool -- only GET",
+    "type": "auto",
+    "tests": [
+      "ms-graph-mcp::tests/test_tools.py::test_graph_list_user_roles_issues_get_only",
+      "gdap-mcp::tests/fake_microsoft.py (call-log assertion inside test_graph_list_user_roles_via_gdap_returns_active_global_admin)"
+    ]
+  },
+  {
+    "id": "TC7",
+    "ac": "AC5",
+    "text": "Given a user_id with no directory role assignment, When graph_list_user_roles(user_id) is called, Then the response is {user_id, count: 0, roles: []}, not an error",
+    "type": "auto",
+    "tests": ["ms-graph-mcp::tests/test_tools.py::test_graph_list_user_roles_empty_for_non_admin"]
+  },
+  {
+    "id": "TC8",
+    "ac": "AC6",
+    "text": "Given a user_id that does not exist in the tenant, When graph_list_user_roles(user_id) is called, Then the response is the same structured 404 error envelope every other user-scoped tool returns (error/message/retryable), not an unhandled exception",
+    "type": "auto",
+    "tests": ["ms-graph-mcp::tests/test_tools.py::test_graph_list_user_roles_unknown_user_returns_404_envelope"]
+  }
+]
