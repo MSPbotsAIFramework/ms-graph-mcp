@@ -49,6 +49,7 @@ EXPECTED_TOOLS = {
     "graph_list_messages": set(),
     "graph_get_message": {"message_id"},
     "graph_read_mail_attachment": {"message_id", "attachment_id"},
+    "graph_delete_message": {"message_id"},
     "graph_search_sites": {"query"},
     "graph_list_drive_items": {"drive_id"},
     "graph_get_file": {"drive_id", "item_id"},
@@ -87,6 +88,7 @@ _NON_READ_ONLY = {
     "graph_write_file_text",
     "graph_create_file_text",
     "graph_delete_file",
+    "graph_delete_message",
     "graph_remove_managed_device",
     "graph_create_calendar_event",
     "graph_cancel_calendar_event",
@@ -166,7 +168,13 @@ async def test_tools_list_snapshot():
     # distinct endpoint; the by-id and no-id-list cases are collapsed into
     # one optional-parameter tool rather than split (see graph_list_domains,
     # which has no id parameter for the same "small, bounded resource" reason).
-    assert len(names) <= 46, "tool count should stay within SOP's <=20 guideline (+26 justified)"
+    # +1 for graph_delete_message (PRD-21578): Ginko IT's malicious-email-removal
+    # Rewst flow needs to delete one already-identified message by id; the
+    # mail domain's three existing tools are read/send only, and this follows
+    # the same idempotent-delete pattern as graph_delete_file/
+    # graph_remove_managed_device rather than overloading graph_get_message
+    # with a destructive mode flag.
+    assert len(names) <= 47, "tool count should stay within SOP's <=20 guideline (+27 justified)"
 
     by_name = {t.name: t for t in tools}
     for name, expected_required in EXPECTED_TOOLS.items():
@@ -1144,6 +1152,100 @@ async def test_read_attachment_rejects_ole_file_that_is_not_xls():
     ole_garbage = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\0" * 600
     payload, _ = await _read_attachment(_file_meta("x.xls"), ole_garbage)
     assert payload["error"]["code"] == "invalid_argument"
+
+
+class _DeleteMessageClient:
+    """GraphClient stand-in for graph_delete_message (PRD-21578): DELETE can
+    succeed, 404 (already gone -- must still report success), or raise any
+    other GraphError (must surface as the structured envelope, not success)."""
+
+    def __init__(self, delete_error: GraphError | None = None):
+        self._delete_error = delete_error
+        self.calls: list[str] = []
+
+    async def delete(self, path: str):
+        self.calls.append(path)
+        if self._delete_error is not None:
+            raise self._delete_error
+        return None
+
+
+def _delete_message_mcp(delete_error: GraphError | None = None):
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import mail
+
+    mcp = FastMCP(name="test")
+    client = _DeleteMessageClient(delete_error)
+    mail.register(mcp, lambda: client)
+    return mcp, client
+
+
+@pytest.mark.asyncio
+async def test_delete_message_with_explicit_user_id():
+    """TC1/AC1: an explicit user_id routes through /users/{id}, the app-only
+    / "someone else's mailbox" shape."""
+    mcp, client = _delete_message_mcp()
+
+    _, structured = await mcp.call_tool(
+        "graph_delete_message", {"message_id": "m1", "user_id": "u1"}
+    )
+    payload = json.loads(structured["result"])
+
+    assert client.calls == ["/users/u1/messages/m1"]
+    assert payload == {"user_id": "u1", "message_id": "m1", "deleted": True}
+
+
+@pytest.mark.asyncio
+async def test_delete_message_defaults_to_me():
+    """TC2/AC2: omitting user_id routes through /me, same convention as
+    graph_get_message."""
+    mcp, client = _delete_message_mcp()
+
+    _, structured = await mcp.call_tool("graph_delete_message", {"message_id": "m1"})
+    payload = json.loads(structured["result"])
+
+    assert client.calls == ["/me/messages/m1"]
+    assert payload == {"user_id": "me", "message_id": "m1", "deleted": True}
+
+
+@pytest.mark.asyncio
+async def test_delete_message_is_idempotent_on_404():
+    """TC3/AC3: deleting an already-gone message_id is success, not an
+    error -- matches graph_delete_file/graph_remove_managed_device."""
+    mcp, client = _delete_message_mcp(delete_error=GraphError(404, "not found"))
+
+    _, structured = await mcp.call_tool("graph_delete_message", {"message_id": "gone"})
+    payload = json.loads(structured["result"])
+
+    assert payload == {"user_id": "me", "message_id": "gone", "deleted": True}
+
+
+@pytest.mark.asyncio
+async def test_delete_message_surfaces_non_404_error():
+    """TC4/AC4: a non-404 Graph error (e.g. 403 when the token lacks
+    Mail.ReadWrite) must come back as the structured envelope, with no
+    "deleted": true anywhere in the response."""
+    mcp, client = _delete_message_mcp(delete_error=GraphError(403, "forbidden"))
+
+    _, structured = await mcp.call_tool("graph_delete_message", {"message_id": "m1"})
+    payload = json.loads(structured["result"])
+
+    assert "deleted" not in payload
+    assert payload["error"]["code"] == "unauthorized"
+
+
+@pytest.mark.asyncio
+async def test_delete_message_annotations():
+    """TC5/AC5: mirrors the three existing delete tools' annotation shape --
+    not read-only, destructive, idempotent."""
+    mcp = create_mcp_server(Settings())
+    tools = {t.name: t for t in await mcp.list_tools()}
+    annotations = tools["graph_delete_message"].annotations
+
+    assert annotations.readOnlyHint is False
+    assert annotations.destructiveHint is True
+    assert annotations.idempotentHint is True
 
 
 # --- PRD-20219: W2 onboarding gaps -------------------------------------------
