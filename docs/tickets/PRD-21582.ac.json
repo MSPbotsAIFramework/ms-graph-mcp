@@ -1,0 +1,60 @@
+[
+  {
+    "id": "TC1",
+    "ac": "AC1",
+    "text": "Given a known app registration with a non-expired client secret, When graph_list_applications is called, Then the response includes that application with a secrets entry carrying key_id, display_name, start_date_time, end_date_time, hint, and a positive days_until_expiry",
+    "type": "auto",
+    "tests": ["ms-graph-mcp::tests/test_tools.py::test_graph_list_applications_returns_secret_with_days_until_expiry"]
+  },
+  {
+    "id": "TC2",
+    "ac": "AC2",
+    "text": "Given an app registration with no passwordCredentials, When graph_list_applications is called, Then that application appears in the result with secrets: [], not omitted and not an error",
+    "type": "auto",
+    "tests": ["ms-graph-mcp::tests/test_tools.py::test_graph_list_applications_includes_app_with_no_secrets"]
+  },
+  {
+    "id": "TC3",
+    "ac": "AC3",
+    "text": "Given more applications exist than max_results, When graph_list_applications is called, Then the response returns at most max_results applications, has_more is true, and calling again with next_page_token returns the remainder with no overlap or gap",
+    "type": "auto",
+    "tests": ["ms-graph-mcp::tests/test_tools.py::test_graph_list_applications_paginates_one_page_per_call"]
+  },
+  {
+    "id": "TC4",
+    "ac": "AC4",
+    "text": "Given a full test run exercising graph_list_applications (TC1/TC2/TC5/TC6), When the fake Microsoft Graph server's call log is inspected afterwards, Then it recorded zero PATCH/POST/DELETE requests attributable to this tool -- only GET",
+    "type": "auto",
+    "tests": ["ms-graph-mcp::tests/test_tools.py::test_graph_list_applications_issues_get_only"]
+  },
+  {
+    "id": "TC5",
+    "ac": "AC5",
+    "text": "Given a tenant with zero application registrations, When graph_list_applications is called, Then the response is {count: 0, applications: [], has_more: false, next_page_token: null}, not an error",
+    "type": "auto",
+    "tests": ["ms-graph-mcp::tests/test_tools.py::test_graph_list_applications_empty_tenant"]
+  },
+  {
+    "id": "TC6",
+    "ac": "AC6",
+    "text": "Given an application with a client secret whose end_date_time is in the past, When graph_list_applications is called, Then that secret's days_until_expiry is negative",
+    "type": "auto",
+    "tests": ["ms-graph-mcp::tests/test_tools.py::test_graph_list_applications_negative_days_until_expiry_for_expired_secret"]
+  },
+  {
+    "id": "TC7",
+    "ac": "AC1",
+    "text": "Not executed at design time -- needs a real tenant with Application.Read.All consented. Real-tenant verification: a real app registration with a near-expiry secret returns the expected days_until_expiry through the live service, and the response never contains a secret's actual plaintext value, only metadata",
+    "type": "manual",
+    "steps": [
+      "Confirm the test tenant has re-consented to Application.Read.All after the platform side (MCP-Management-Service) adds the scope",
+      "Call graph_list_applications against that tenant",
+      "Pick an app registration with a known secret end_date_time and manually compute days_until_expiry from it",
+      "Compare the manual calculation to the tool's returned days_until_expiry",
+      "Inspect the full response for any field that looks like a secret value (not just key_id/hint/dates)"
+    ],
+    "expect": "days_until_expiry matches the manual calculation; no field in the response carries a usable secret value, only keyId/displayName/startDateTime/endDateTime/hint metadata",
+    "result": "untested",
+    "evidence": "Not executed at design time -- no real tenant with Application.Read.All consented was available (the scope has not yet been added to the platform's requested scope set, Open Questions/Risks). Per references/mcp-track.md section 3, missing a real vendor account/consent does not block this track; this case is left as an explicit, tracked line item for the dev leg rather than silently skipped."
+  }
+]
