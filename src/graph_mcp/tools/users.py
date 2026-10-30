@@ -835,6 +835,43 @@ def register(mcp: FastMCP, client_factory: Callable[[], GraphClient | None]) -> 
         except GraphError as e:
             return e.to_envelope()
 
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True))
+    async def graph_list_user_roles(
+        user_id: Annotated[str, Field(description="Target user's id (GUID) or userPrincipalName.")],
+    ) -> str:
+        """List the Entra ID directory roles a user is an active member of.
+
+        For an offboarding guard: confirms whether a departing user holds an
+        administrator role before resetting their password or blocking
+        sign-in (PRD-21391). Every entry is "active" and directory-wide in
+        this slice -- PIM-eligible roles and Administrative-Unit-scoped
+        assignments are not covered (see the connector docs).
+        """
+        client = client_factory()
+        if client is None:
+            return NO_TOKEN
+
+        try:
+            # /memberOf is polymorphic (groups, directoryRoles, administrative
+            # units, ...); the OData type-cast segment makes Graph itself
+            # return only directoryRole objects, same pattern as
+            # graph_list_user_groups's .../microsoft.graph.group cast.
+            result = await client.get(f"/users/{user_id}/memberOf/microsoft.graph.directoryRole")
+            raw_roles = result.get("value", []) if isinstance(result, dict) else []
+            roles = [
+                {
+                    "id": role.get("id"),
+                    "display_name": role.get("displayName"),
+                    "role_template_id": role.get("roleTemplateId"),
+                    "classification": "active",
+                    "scope": "directory",
+                }
+                for role in raw_roles
+            ]
+            return dump_json_capped({"user_id": user_id, "count": len(roles), "roles": roles})
+        except GraphError as e:
+            return e.to_envelope()
+
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, idempotentHint=False))
     async def graph_create_tap(
         user_id: Annotated[

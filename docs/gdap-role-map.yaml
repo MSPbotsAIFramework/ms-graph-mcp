@@ -63,6 +63,10 @@ graph_list_user_groups:
   roles:
   - Directory Readers
   note: 'Read-only: lists the groups a user belongs to.'
+graph_list_user_roles:
+  roles:
+  - Directory Readers
+  note: 'Read-only: lists the Entra ID directory roles a user is an active member of (PRD-21391).'
 graph_list_groups:
   roles:
   - Directory Readers
