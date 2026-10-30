@@ -119,6 +119,10 @@ graph_read_mail_attachment:
   roles: null
   note: No Entra role grants mailbox content access; gated by Mail.Read consent, not
     a role.
+graph_delete_message:
+  roles: null
+  note: No Entra role grants mailbox content mutation; gated by Mail.ReadWrite consent,
+    not a role.
 graph_search_sites:
   roles:
   - SharePoint Administrator
