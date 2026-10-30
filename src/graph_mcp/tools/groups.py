@@ -137,9 +137,11 @@ def register(mcp: FastMCP, client_factory: Callable[[], GraphClient | None]) -> 
 
         Use to mirror memberships onto a new hire, or to route a group
         through Graph, Exchange or AD during offboarding — each entry
-        includes groupTypes, mailEnabled and sync_source ("on-premises" for
-        AD-synced groups, else "cloud"). has_more=true: call again with
-        next_page_token (one Graph page per call — PRD-20393).
+        includes groupTypes, mailEnabled, isAssignableToRole (true for groups
+        that can carry administrator roles; null for ordinary groups,
+        PRD-21676) and sync_source ("on-premises" for AD-synced groups, else
+        "cloud"). has_more=true: call again with next_page_token (one Graph
+        page per call — PRD-20393).
         """
         client = client_factory()
         if client is None:
@@ -147,7 +149,10 @@ def register(mcp: FastMCP, client_factory: Callable[[], GraphClient | None]) -> 
 
         max_results = max(1, min(max_results, _HARD_CAP_MAX_RESULTS))
         params: dict = {
-            "$select": "id,displayName,groupTypes,securityEnabled,mailEnabled,onPremisesSyncEnabled",
+            "$select": (
+                "id,displayName,groupTypes,securityEnabled,mailEnabled,"
+                "onPremisesSyncEnabled,isAssignableToRole"
+            ),
             "$top": str(min(max_results, _GRAPH_TOP_MAX)),
         }
         if page_token:
@@ -366,10 +371,12 @@ def register(mcp: FastMCP, client_factory: Callable[[], GraphClient | None]) -> 
     async def graph_get_group(
         group_id: Annotated[str, Field(description="Group object id (GUID).")],
     ) -> str:
-        """Read one Entra ID group's details by id, incl. mail-enabled and sync source.
+        """Read one Entra ID group's details by id, incl. mail-enabled, sync source and isAssignableToRole.
 
         sync_source is "on-premises" for AD-synced groups (membership must be
-        changed in on-prem AD) or "cloud". Use to confirm a group id still
+        changed in on-prem AD) or "cloud". isAssignableToRole is true for
+        groups that can carry administrator roles, null for ordinary groups
+        (Graph passthrough, PRD-21676). Use to confirm a group id still
         exists and is the expected type before graph_assign_groups.
         """
         client = client_factory()
@@ -383,7 +390,8 @@ def register(mcp: FastMCP, client_factory: Callable[[], GraphClient | None]) -> 
                     "$select": (
                         "id,displayName,description,mail,mailNickname,groupTypes,"
                         "securityEnabled,mailEnabled,visibility,membershipRule,"
-                        "onPremisesSyncEnabled,onPremisesLastSyncDateTime"
+                        "onPremisesSyncEnabled,onPremisesLastSyncDateTime,"
+                        "isAssignableToRole"
                     )
                 },
             )
