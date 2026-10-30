@@ -35,6 +35,7 @@ EXPECTED_TOOLS = {
     "graph_assign_groups": {"user_id", "group_ids"},
     "graph_add_group_owner": {"group_id", "user_id"},
     "graph_list_user_groups": {"user_id"},
+    "graph_list_user_roles": {"user_id"},
     "graph_list_groups": set(),
     "graph_remove_group_member": {"user_id", "group_ids"},
     "graph_list_owned_groups": {"user_id"},
@@ -152,7 +153,13 @@ async def test_tools_list_snapshot():
     # as structured JSON so the Agent Platform can read "which GDAP role does
     # this tool need" without parsing the README; it is a read-only, static
     # lookup, not a Graph-calling tool, so it does not fold into any existing one.
-    assert len(names) <= 44, "tool count should stay within SOP's <=20 guideline (+24 justified)"
+    # +1 for graph_list_user_roles (PRD-21391): an offboarding guard needs to
+    # know whether a departing user is a directory administrator before a
+    # password reset / sign-in block; no existing tool reads directory role
+    # assignments (graph_list_user_groups deliberately excludes them, see its
+    # own /memberOf comment), so this is a distinct endpoint, not a mode flag
+    # on an existing tool.
+    assert len(names) <= 45, "tool count should stay within SOP's <=20 guideline (+25 justified)"
 
     by_name = {t.name: t for t in tools}
     for name, expected_required in EXPECTED_TOOLS.items():
@@ -3584,3 +3591,127 @@ async def test_send_mail_logs_attachment_metadata(fetch, caplog):
         await _send(mcp, attachments=[{"content_url": _PUBLIC_FILE, "filename": "r.html"}])
     assert hashlib.sha256(b"report").hexdigest() in caplog.text
     assert "source=url" in caplog.text
+
+
+# --- PRD-21391: graph_list_user_roles ---------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_graph_list_user_roles_returns_active_global_admin():
+    """TC1/AC1: a known Global Administrator's user_id must come back with a
+    role entry named "Global Administrator", classification "active". Also
+    covers half of TC6/AC4: the only Graph call made is a GET."""
+    from graph_mcp.tools import users
+
+    mcp, client = _register(users)
+    client._result = {
+        "value": [
+            {
+                "id": "role-ga",
+                "displayName": "Global Administrator",
+                "roleTemplateId": "62e90394-69f5-4237-9190-012177145e10",
+            }
+        ]
+    }
+    result = json.loads(
+        (await mcp.call_tool("graph_list_user_roles", {"user_id": "u1"}))[0][0].text
+    )
+
+    assert result["user_id"] == "u1"
+    assert result["count"] == 1
+    assert result["roles"][0]["display_name"] == "Global Administrator"
+    assert result["roles"][0]["classification"] == "active"
+    assert client.calls[0][0] == "/users/u1/memberOf/microsoft.graph.directoryRole"
+    assert client.methods == ["GET"]
+
+
+@pytest.mark.asyncio
+async def test_graph_list_user_roles_entry_shape():
+    """TC3/AC2: every returned role entry carries display_name,
+    classification and scope -- "active"/"directory" for every entry in
+    this slice (PIM-eligible and AU-scoped roles are out of scope, see the
+    connector docs)."""
+    from graph_mcp.tools import users
+
+    mcp, client = _register(users)
+    client._result = {
+        "value": [
+            {
+                "id": "role-ga",
+                "displayName": "Global Administrator",
+                "roleTemplateId": "62e90394-69f5-4237-9190-012177145e10",
+            },
+            {
+                "id": "role-ua",
+                "displayName": "User Administrator",
+                "roleTemplateId": "fe930be7-5e62-47db-91af-98c3a49a38b1",
+            },
+        ]
+    }
+    result = json.loads(
+        (await mcp.call_tool("graph_list_user_roles", {"user_id": "u1"}))[0][0].text
+    )
+
+    assert result["count"] == 2
+    for role in result["roles"]:
+        assert role["display_name"]
+        assert role["classification"] == "active"
+        assert role["scope"] == "directory"
+        assert role["role_template_id"]
+
+
+@pytest.mark.asyncio
+async def test_graph_list_user_roles_issues_get_only():
+    """TC6/AC4: across a result carrying role data, the fake Graph server
+    must record only a GET for this tool -- never PATCH/POST/DELETE. This
+    tool has no write path at all, so one call is enough to show the whole
+    method surface it ever touches."""
+    from graph_mcp.tools import users
+
+    mcp, client = _register(users)
+    client._result = {
+        "value": [{"id": "role-ga", "displayName": "Global Administrator"}]
+    }
+    await mcp.call_tool("graph_list_user_roles", {"user_id": "u1"})
+
+    assert client.methods == ["GET"]
+
+
+@pytest.mark.asyncio
+async def test_graph_list_user_roles_empty_for_non_admin():
+    """TC7/AC5: a user with no directory role assignment gets an empty
+    list back, not an error -- mirrors graph_list_auth_methods/
+    graph_list_user_groups's empty-result contract."""
+    from graph_mcp.tools import users
+
+    mcp, client = _register(users)
+    client._result = {"value": []}
+    result = json.loads(
+        (await mcp.call_tool("graph_list_user_roles", {"user_id": "u1"}))[0][0].text
+    )
+
+    assert result == {"user_id": "u1", "count": 0, "roles": []}
+
+
+@pytest.mark.asyncio
+async def test_graph_list_user_roles_unknown_user_returns_404_envelope():
+    """TC8/AC6: a user_id that does not exist in the tenant must come back
+    as the same structured 404 envelope every other user-scoped tool
+    returns, not an unhandled exception."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import users
+
+    class _NotFoundClient:
+        async def get(self, path: str, params=None, extra_headers=None):
+            raise GraphError(404, "Resource 'bad-user' does not exist.")
+
+    mcp = FastMCP(name="test")
+    users.register(mcp, lambda: _NotFoundClient())
+
+    result = json.loads(
+        (await mcp.call_tool("graph_list_user_roles", {"user_id": "bad-user"}))[0][0].text
+    )
+
+    assert result["error"]["code"] == "not_found"
+    assert result["error"]["retryable"] is False
