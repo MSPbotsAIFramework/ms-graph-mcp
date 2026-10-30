@@ -1,0 +1,63 @@
+[
+  {
+    "id": "TC1",
+    "ac": "AC1",
+    "text": "Given a tenant with Security Defaults enabled, when graph_get_security_defaults_policy is called with no arguments, then the result contains isEnabled=true and a non-empty displayName",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_get_security_defaults_policy_returns_enabled_state"],
+    "priority": "high",
+    "notes": "Model after domains.py's graph_list_domains via the _register(module, result=...)/_CapturingClient harness (tests/test_tools.py:207-262)."
+  },
+  {
+    "id": "TC2",
+    "ac": "AC1",
+    "text": "Given a tenant with Security Defaults disabled, when the tool is called, then the result contains isEnabled=false, proving the value is read from Graph's response and not hard-coded",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_get_security_defaults_policy_returns_disabled_state"],
+    "priority": "high"
+  },
+  {
+    "id": "TC3",
+    "ac": "AC2",
+    "text": "The registered tool schema for graph_get_security_defaults_policy takes zero parameters",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_tools_list_snapshot"],
+    "priority": "medium",
+    "notes": "Covered by adding \"graph_get_security_defaults_policy\": set() to EXPECTED_TOOLS (tests/test_tools.py:17-66)."
+  },
+  {
+    "id": "TC4",
+    "ac": "AC3",
+    "text": "Given no resolvable Graph client for the current context (client_factory() returns None), when the tool is called, then it returns the connector's standard NO_TOKEN envelope, not an exception",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_get_security_defaults_policy_returns_no_token_envelope"],
+    "priority": "medium"
+  },
+  {
+    "id": "TC5",
+    "ac": "AC4",
+    "text": "Given Graph returns 403 Insufficient privileges, when the tool is called, then the result is {\"error\":{\"code\":\"unauthorized\",\"retryable\":false,...}} via the connector's existing GraphError/_classify mapping",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_get_security_defaults_policy_reports_insufficient_privileges"],
+    "priority": "high",
+    "notes": "Same pattern as the existing graph_add_group_owner insufficient-privileges test (~tests/test_tools.py:3410-3422)."
+  },
+  {
+    "id": "TC6",
+    "ac": "AC5",
+    "text": "Given two concurrent calls to the tool, each resolving a GraphClient built from a different tenant's token/mock response, when both run, then each returns only its own tenant's isEnabled value with no cross-call bleed",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_get_security_defaults_policy_is_isolated_per_request_token"],
+    "priority": "high",
+    "notes": "Multi-tenant isolation anchor (S6 quality line). Modeled on test_send_mail_attachments_do_not_leak_across_calls (tests/test_tools.py:849) which proves the same no-shared-state property for an existing tool."
+  },
+  {
+    "id": "TC7",
+    "ac": "AC6",
+    "text": "After the change, the repo's own three-way consistency test passes with the new tool present and consistent across the live tools/list registry, docs/gdap-role-map.yaml, and the README Tools table",
+    "type": "auto",
+    "tests": ["tests/test_gdap_role_map.py::test_gdap_role_map_matches_registered_tools_and_readme"],
+    "priority": "high",
+    "notes": "Existing test; passes automatically once EXPECTED_TOOLS-equivalent sources (yaml entry, README row, server registration) are all added consistently. Also bump the asserted role-map count (currently 45) to match."
+  }
+]
