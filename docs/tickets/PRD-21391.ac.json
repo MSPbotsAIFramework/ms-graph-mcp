@@ -1,0 +1,102 @@
+[
+  {
+    "id": "TC1",
+    "ac": "AC1",
+    "text": "Given a known Global Administrator's user_id in a connected Microsoft Graph tenant, When graph_list_user_roles(user_id) is called, Then the response's roles list includes an entry with display_name \"Global Administrator\" and classification \"active\"",
+    "type": "auto",
+    "tests": ["ms-graph-mcp::tests/test_tools.py::test_graph_list_user_roles_returns_active_global_admin"],
+    "result": "pass",
+    "evidence": "uv run pytest -v -k graph_list_user_roles (ms-graph-mcp dev/PRD-21391): test_graph_list_user_roles_returns_active_global_admin PASSED"
+  },
+  {
+    "id": "TC2",
+    "ac": "AC1",
+    "text": "Given a known Global Administrator's user_id in a customer tenant reached via GDAP, When graph_list_user_roles(customer_tenant_id, user_id) is called, Then the response's roles list includes an entry with display_name \"Global Administrator\"",
+    "type": "auto",
+    "tests": ["gdap-mcp::tests/test_flows.py::test_graph_list_user_roles_via_gdap_returns_active_global_admin"],
+    "result": "pass",
+    "evidence": "uv run --frozen pytest -v -k graph_list_user_roles (gdap-mcp dev/PRD-21391, real PostgreSQL via gdap-test-pg): test_graph_list_user_roles_via_gdap_returns_active_global_admin PASSED"
+  },
+  {
+    "id": "TC3",
+    "ac": "AC2",
+    "text": "Given graph_list_user_roles returns a non-empty roles list, When a returned entry is inspected, Then it carries display_name, classification, and scope (classification is \"active\" and scope is \"directory\" for every entry in this slice)",
+    "type": "auto",
+    "tests": ["ms-graph-mcp::tests/test_tools.py::test_graph_list_user_roles_entry_shape"],
+    "result": "pass",
+    "evidence": "uv run pytest -v -k graph_list_user_roles (ms-graph-mcp dev/PRD-21391): test_graph_list_user_roles_entry_shape PASSED"
+  },
+  {
+    "id": "TC4",
+    "ac": "AC3",
+    "text": "Given the ms-graph-mcp server's tool list, When graph_list_user_roles is inspected, Then it is registered with exactly one required parameter, user_id, and no customer_tenant_id (single-tenant connector)",
+    "type": "auto",
+    "tests": ["ms-graph-mcp::tests/test_tools.py::test_tools_list_snapshot (EXPECTED_TOOLS entry for graph_list_user_roles)"],
+    "result": "pass",
+    "evidence": "uv run pytest -v -k test_tools_list_snapshot (ms-graph-mcp dev/PRD-21391): PASSED; live initialize+tools/list smoke on localhost also confirmed required=['user_id'], readOnlyHint=true, 45 tools total"
+  },
+  {
+    "id": "TC5",
+    "ac": "AC3",
+    "text": "Given the gdap-mcp server's tool list, When graph_list_user_roles is inspected, Then it is registered with customer_tenant_id as a required parameter in addition to user_id (mirrors every other ported Graph tool, e.g. graph_get_user)",
+    "type": "auto",
+    "tests": ["gdap-mcp::tests/test_http.py::test_mcp_over_http (graph_list_user_roles required-params assertion -- the file's own docstring: every /mcp check lives in the one test that starts the session manager, so this is not a standalone test function)"],
+    "result": "pass",
+    "evidence": "uv run --frozen pytest -v -k test_mcp_over_http (gdap-mcp dev/PRD-21391): PASSED; asserts required == {customer_tenant_id, user_id}"
+  },
+  {
+    "id": "TC6",
+    "ac": "AC4",
+    "text": "Given a full test run exercising graph_list_user_roles in both connectors (TC1/TC2/TC7/TC8), When the fake Microsoft Graph server's call log is inspected afterwards, Then it recorded zero PATCH/POST/DELETE requests attributable to this tool -- only GET",
+    "type": "auto",
+    "tests": [
+      "ms-graph-mcp::tests/test_tools.py::test_graph_list_user_roles_issues_get_only",
+      "gdap-mcp (by construction, not a call-log assertion: the tool body is copied verbatim from ms-graph-mcp -- same GET-only code path -- and tests/fake_microsoft.py registers only a GET route for users/{id}/memberOf/microsoft.graph.directoryRole, no PATCH/POST/DELETE handler exists for that path at all)"
+    ],
+    "result": "pass",
+    "evidence": "uv run pytest -v -k graph_list_user_roles (ms-graph-mcp dev/PRD-21391): test_graph_list_user_roles_issues_get_only PASSED (asserts client.methods == ['GET']); gdap-mcp fake_microsoft.py diff reviewed -- only a GET route added for this path"
+  },
+  {
+    "id": "TC7",
+    "ac": "AC5",
+    "text": "Given a user_id with no directory role assignment, When graph_list_user_roles(user_id) is called, Then the response is {user_id, count: 0, roles: []}, not an error",
+    "type": "auto",
+    "tests": ["ms-graph-mcp::tests/test_tools.py::test_graph_list_user_roles_empty_for_non_admin"],
+    "result": "pass",
+    "evidence": "uv run pytest -v -k graph_list_user_roles (ms-graph-mcp dev/PRD-21391): test_graph_list_user_roles_empty_for_non_admin PASSED; gdap-mcp side also covered by test_graph_list_user_roles_empty_for_non_admin_customer (dev addition, source: dev) PASSED"
+  },
+  {
+    "id": "TC8",
+    "ac": "AC6",
+    "text": "Given a user_id that does not exist in the tenant, When graph_list_user_roles(user_id) is called, Then the response is the same structured 404 error envelope every other user-scoped tool returns (error/message/retryable), not an unhandled exception",
+    "type": "auto",
+    "tests": ["ms-graph-mcp::tests/test_tools.py::test_graph_list_user_roles_unknown_user_returns_404_envelope"],
+    "result": "pass",
+    "evidence": "uv run pytest -v -k graph_list_user_roles (ms-graph-mcp dev/PRD-21391): test_graph_list_user_roles_unknown_user_returns_404_envelope PASSED"
+  },
+  {
+    "id": "TC9",
+    "ac": "AC5",
+    "text": "Given a GDAP customer tenant with no directory_roles fixture entry, When graph_list_user_roles(customer_tenant_id, user_id) is called, Then the response is {user_id, count: 0, roles: []} -- same empty contract through the GDAP wrapper as TC7 shows for the direct connector",
+    "type": "auto",
+    "source": "dev",
+    "tests": ["gdap-mcp::tests/test_flows.py::test_graph_list_user_roles_empty_for_non_admin_customer"],
+    "result": "pass",
+    "evidence": "uv run --frozen pytest -v -k graph_list_user_roles (gdap-mcp dev/PRD-21391): test_graph_list_user_roles_empty_for_non_admin_customer PASSED"
+  },
+  {
+    "id": "TC10",
+    "ac": "AC1",
+    "text": "Not executed -- needs a real tenant. AC1/TC1/TC2's real-tenant verification: a real Global Administrator and a real non-admin user in a connected tenant return the expected active-role / empty-role results through the live service, not just the fake Graph fixtures",
+    "type": "manual",
+    "source": "dev",
+    "steps": [
+      "Call graph_list_user_roles(user_id=<real Global Administrator UPN>) against a real connected tenant",
+      "Call graph_list_user_roles(user_id=<real non-admin user UPN>) against the same tenant",
+      "Repeat both through the GDAP connector with the matching customer_tenant_id"
+    ],
+    "expect": "The admin user's response includes a role entry with display_name \"Global Administrator\"; the non-admin user's response is {count: 0, roles: []}; both connectors agree",
+    "result": "blocked",
+    "evidence": "No real tenant / test account with a known Global Administrator was available to DEV01 in this environment (per references/mcp-track.md section 3: missing a real vendor account does not block this track). Design's own Risks section already flags the minimal-scope assumption as unverified on a real tenant; this test case makes that gap an explicit, tracked line item rather than a silent one."
+  }
+]
