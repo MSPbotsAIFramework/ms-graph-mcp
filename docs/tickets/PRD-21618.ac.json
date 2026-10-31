@@ -4,42 +4,54 @@
     "ac": "AC1",
     "text": "Given a fake Graph client returns zero matches for GET /servicePrincipals?$filter=appId eq '<app_id>', When graph_service_principal_create_and_add_password is called with that app_id, Then POST /servicePrincipals is called with {\"appId\": \"<app_id>\"}, POST /servicePrincipals/{new_id}/addPassword is called next, and the result has created=true with the new service principal's id, a secret_text, a key_id, and a validity window.",
     "type": "auto",
-    "tests": []
+    "tests": ["tests/test_tools.py::test_sp_create_and_add_password_creates_when_no_match"],
+    "result": "pass",
+    "evidence": "uv run pytest -q tests/test_tools.py::test_sp_create_and_add_password_creates_when_no_match -> 1 passed. Asserts post_calls[0]==(\"/servicePrincipals\",{\"appId\":\"app-1\"}), post_calls[1][0]==\"/servicePrincipals/sp-new/addPassword\", created=true, service_principal_id/secret_text/key_id/start_date_time/end_date_time all present in the response."
   },
   {
     "id": "TC2",
     "ac": "AC2",
     "text": "Given a fake Graph client returns exactly one match for the same filter, When the tool is called, Then POST /servicePrincipals is NOT called, POST /servicePrincipals/{existing_id}/addPassword is called on the existing id, and the result has created=false.",
     "type": "auto",
-    "tests": []
+    "tests": ["tests/test_tools.py::test_sp_create_and_add_password_reuses_existing_match"],
+    "result": "pass",
+    "evidence": "uv run pytest -q tests/test_tools.py::test_sp_create_and_add_password_reuses_existing_match -> 1 passed. Asserts \"/servicePrincipals\" never appears among post_calls, the only POST is to \"/servicePrincipals/sp-existing/addPassword\", and created=false."
   },
   {
     "id": "TC3",
     "ac": "AC3",
     "text": "Given no start_date_time/lifetime_minutes arguments, When the tool is called, Then the addPassword request body's endDateTime is exactly 10 minutes after its startDateTime.",
     "type": "auto",
-    "tests": []
+    "tests": ["tests/test_tools.py::test_sp_create_and_add_password_default_lifetime_is_ten_minutes"],
+    "result": "pass",
+    "evidence": "uv run pytest -q tests/test_tools.py::test_sp_create_and_add_password_default_lifetime_is_ten_minutes -> 1 passed. Asserts \"startDateTime\" is absent from the addPassword body (Graph applies its own now) and computed endDateTime falls within a 2s tolerance window of now+10min bracketed by timestamps taken immediately before/after the call."
   },
   {
     "id": "TC4",
     "ac": "AC4",
     "text": "Given lifetime_minutes=30 and an explicit start_date_time, When the tool is called, Then the addPassword request body's endDateTime is exactly start_date_time + 30 minutes.",
     "type": "auto",
-    "tests": []
+    "tests": ["tests/test_tools.py::test_sp_create_and_add_password_custom_lifetime_and_start"],
+    "result": "pass",
+    "evidence": "uv run pytest -q tests/test_tools.py::test_sp_create_and_add_password_custom_lifetime_and_start -> 1 passed. Asserts body[\"startDateTime\"]==\"2026-11-01T00:00:00Z\" and body[\"endDateTime\"]==\"2026-11-01T00:30:00Z\" (exact, no tolerance needed since both ends are deterministic)."
   },
   {
     "id": "TC5",
     "ac": "AC5",
     "text": "Given a fake Graph client raises a 404/400 for the app_id used in POST /servicePrincipals, When the tool is called, Then the result is a structured {\"error\": {...}} envelope, not an exception propagating out of the tool call.",
     "type": "auto",
-    "tests": []
+    "tests": ["tests/test_tools.py::test_sp_create_and_add_password_create_failure_returns_envelope"],
+    "result": "pass",
+    "evidence": "uv run pytest -q tests/test_tools.py::test_sp_create_and_add_password_create_failure_returns_envelope -> 1 passed. GraphError(404, ...) raised from the create-step POST surfaces as {\"error\":{\"code\":\"not_found\",\"retryable\":false,...}} via the existing GraphError.to_envelope() path, no exception propagates."
   },
   {
     "id": "TC6",
     "ac": "AC6",
     "text": "Given a fake Graph client returns two matches for the filter, When the tool is called, Then the result is {\"error\": {\"code\": \"service_principal_ambiguous\", ..., \"candidates\": [id1, id2]}} and neither POST /servicePrincipals nor POST .../addPassword is called.",
     "type": "auto",
-    "tests": []
+    "tests": ["tests/test_tools.py::test_sp_create_and_add_password_ambiguous_match_returns_structured_error"],
+    "result": "pass",
+    "evidence": "uv run pytest -q tests/test_tools.py::test_sp_create_and_add_password_ambiguous_match_returns_structured_error -> 1 passed. Asserts error.code==\"service_principal_ambiguous\", error.candidates==[\"sp-a\",\"sp-b\"], and client.post_calls==[] (no password minted for an undecided target)."
   },
   {
     "id": "TC7",
@@ -56,14 +68,18 @@
     "ac": "AC8",
     "text": "Given no X-Ms-Graph-Token header (client_factory() returns None), When the tool is called, Then the result equals the connector's NO_TOKEN envelope, unchanged from every other tool's behavior.",
     "type": "auto",
-    "tests": []
+    "tests": ["tests/test_tools.py::test_sp_create_and_add_password_without_token_returns_no_token_envelope"],
+    "result": "pass",
+    "evidence": "uv run pytest -q tests/test_tools.py::test_sp_create_and_add_password_without_token_returns_no_token_envelope -> 1 passed. client_factory() -> None returns the shared NO_TOKEN constant byte-for-byte, same as every other tool."
   },
   {
     "id": "TC9",
     "ac": "AC9",
     "text": "Given a successful addPassword response from the fake client, When the tool's return value is inspected, Then secret_text appears exactly once in the JSON payload and no logging facility is called anywhere in the request path (there is none to call).",
     "type": "auto",
-    "tests": []
+    "tests": ["tests/test_tools.py::test_sp_create_and_add_password_secret_appears_exactly_once"],
+    "result": "pass",
+    "evidence": "uv run pytest -q tests/test_tools.py::test_sp_create_and_add_password_secret_appears_exactly_once -> 1 passed. raw.count(\"only-once-secret\")==1 on the serialized tool response; api_client.py's request path has no logging call to verify against (confirmed by reading the file, not assumed)."
   },
   {
     "id": "TC10",
@@ -73,6 +89,8 @@
     "tests": [
       "tests/test_gdap_role_map.py::test_gdap_role_map_matches_registered_tools_and_readme",
       "tests/test_tools.py::test_tools_list_snapshot"
-    ]
+    ],
+    "result": "partial",
+    "evidence": "test_gdap_role_map_matches_registered_tools_and_readme: pass (role_map count 48, new tool's yaml/README roles match exactly, no consistency problems). test_tools_list_snapshot: FAILS, but on a pre-existing, unrelated assertion -- graph_list_user_groups's docstring is 547 chars against this test's own <=500 cap. Confirmed pre-existing and not introduced by this ticket: `git stash` back to the pristine dev/PRD-21618 base (54afa38, before any PRD-21618 code) reproduces the identical failure on the identical tool/line, unrelated to service_principals.py. `tdd.py diff --from baseline --to final` (both measured on this same worktree) reports 0 regressions, 194->202 passed (the +8 new PRD-21618 tests), same 1 pre-existing failure in both. All of this test's assertions specific to the new tool (48 in EXPECTED_TOOLS, required={\"app_id\"}, readOnlyHint/idempotentHint, description length, no leaked 'API:' detail) pass; only the unrelated graph_list_user_groups line keeps the test red. Not fixed here -- out of this ticket's scope (different tool, different module), flagged in Handoff as a suggested follow-up."
   }
 ]
