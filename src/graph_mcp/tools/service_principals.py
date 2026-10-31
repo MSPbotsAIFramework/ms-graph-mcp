@@ -17,7 +17,7 @@ short default lifetime, not by cleanup.
 """
 
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from mcp.server.fastmcp import FastMCP
@@ -36,13 +36,13 @@ def _format_graph_datetime(value: datetime) -> str:
     """Render a tz-aware datetime the way Graph's own DateTimeOffset fields
     come back (seconds precision, trailing Z), matching the style already
     used for employeeHireDate normalization (users.py's _normalize_hire_date)."""
-    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _parse_graph_datetime(value: str) -> datetime:
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
     return parsed
 
 
@@ -125,8 +125,8 @@ def register(mcp: FastMCP, client_factory: Callable[[], GraphClient | None]) -> 
                 service_principal_id = sp["id"]
                 created = True
 
-            start_dt = _parse_graph_datetime(start_date_time) if start_date_time else datetime.now(
-                timezone.utc
+            start_dt = (
+                _parse_graph_datetime(start_date_time) if start_date_time else datetime.now(UTC)
             )
             end_date_time = _format_graph_datetime(start_dt + timedelta(minutes=lifetime_minutes))
 

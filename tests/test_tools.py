@@ -4382,7 +4382,7 @@ async def test_sp_create_and_add_password_default_lifetime_is_ten_minutes():
     """TC3/AC3: no start_date_time/lifetime_minutes given -> the addPassword
     body's endDateTime is exactly 10 minutes after "now", and startDateTime
     is omitted from the body entirely (letting Graph apply its own "now")."""
-    from datetime import datetime, timedelta, timezone
+    from datetime import UTC, datetime, timedelta
 
     client = _RoutedClient(
         get_responses={"/servicePrincipals": {"value": []}},
@@ -4391,13 +4391,13 @@ async def test_sp_create_and_add_password_default_lifetime_is_ten_minutes():
             "/servicePrincipals/sp-new/addPassword": {"secretText": "x", "keyId": "k"},
         },
     )
-    before = datetime.now(timezone.utc)
+    before = datetime.now(UTC)
     await _call_sp(client, app_id="app-1")
-    after = datetime.now(timezone.utc)
+    after = datetime.now(UTC)
 
     body = client.post_calls[1][1]["passwordCredential"]
     assert "startDateTime" not in body
-    end = datetime.strptime(body["endDateTime"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    end = datetime.strptime(body["endDateTime"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
     assert before + timedelta(minutes=10) - timedelta(seconds=2) <= end
     assert end <= after + timedelta(minutes=10) + timedelta(seconds=2)
 
