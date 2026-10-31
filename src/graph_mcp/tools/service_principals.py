@@ -125,9 +125,17 @@ def register(mcp: FastMCP, client_factory: Callable[[], GraphClient | None]) -> 
                 service_principal_id = sp["id"]
                 created = True
 
-            start_dt = (
-                _parse_graph_datetime(start_date_time) if start_date_time else datetime.now(UTC)
-            )
+            if start_date_time is not None:
+                try:
+                    start_dt = _parse_graph_datetime(start_date_time)
+                except ValueError:
+                    return error_envelope(
+                        "invalid_argument",
+                        f"start_date_time is not a valid ISO 8601 date-time: {start_date_time!r}",
+                        False,
+                    )
+            else:
+                start_dt = datetime.now(UTC)
             end_date_time = _format_graph_datetime(start_dt + timedelta(minutes=lifetime_minutes))
 
             password_credential: dict = {

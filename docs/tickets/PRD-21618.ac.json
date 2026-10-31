@@ -82,6 +82,15 @@
     "evidence": "uv run pytest -q tests/test_tools.py::test_sp_create_and_add_password_secret_appears_exactly_once -> 1 passed. raw.count(\"only-once-secret\")==1 on the serialized tool response; api_client.py's request path has no logging call to verify against (confirmed by reading the file, not assumed)."
   },
   {
+    "id": "TC11",
+    "source": "dev",
+    "text": "Given start_date_time is a non-ISO-8601 string (e.g. \"not-a-date\"), When graph_service_principal_create_and_add_password is called, Then the result is a structured {\"error\": {\"code\": \"invalid_argument\", ...}} envelope, not an unhandled ValueError propagating out of the tool call, and POST .../addPassword is never called.",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_sp_create_and_add_password_invalid_start_date_time_returns_structured_error"],
+    "result": "pass",
+    "evidence": "uv run pytest -q tests/test_tools.py::test_sp_create_and_add_password_invalid_start_date_time_returns_structured_error -> 1 passed. Asserts error.code==\"invalid_argument\", error.retryable is false, the malformed value is quoted in error.message, and post_calls contains only the service-principal create call (addPassword never reached). Added per code review round 1 must-fix (docs/tickets/PRD-21618-review.md): start_date_time parsing previously raised a raw ValueError instead of the connector's structured envelope."
+  },
+  {
     "id": "TC10",
     "ac": "AC10",
     "text": "Given graph_service_principal_create_and_add_password is registered with a matching README row and docs/gdap-role-map.yaml entry, and the two hard-coded lockstep counts (EXPECTED_TOOLS-derived tool count and role_map count) are bumped 47->48, When tests/test_gdap_role_map.py and test_tools_list_snapshot run, Then both pass without weakening either test.",

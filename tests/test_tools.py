@@ -4424,6 +4424,25 @@ async def test_sp_create_and_add_password_custom_lifetime_and_start():
 
 
 @pytest.mark.asyncio
+async def test_sp_create_and_add_password_invalid_start_date_time_returns_structured_error():
+    """Review round 1 regression (PRD-21618): a malformed start_date_time
+    must not raise an unhandled ValueError out of the tool call -- it has to
+    surface as the connector's structured error envelope, same as every
+    other error path in this tool. Neither POST call should fire once the
+    date fails to parse."""
+    client = _RoutedClient(
+        get_responses={"/servicePrincipals": {"value": []}},
+        post_responses={"/servicePrincipals": {"id": "sp-new"}},
+    )
+    payload = await _call_sp(client, app_id="app-1", start_date_time="not-a-date")
+
+    assert payload["error"]["code"] == "invalid_argument"
+    assert payload["error"]["retryable"] is False
+    assert "not-a-date" in payload["error"]["message"]
+    assert client.post_calls == [("/servicePrincipals", {"appId": "app-1"})]
+
+
+@pytest.mark.asyncio
 async def test_sp_create_and_add_password_create_failure_returns_envelope():
     """TC5/AC5: a 404 from the create-service-principal step (unknown
     app_id) surfaces as the structured not_found envelope, not an exception

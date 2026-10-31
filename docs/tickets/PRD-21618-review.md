@@ -13,4 +13,16 @@ Verdict: changes requested
 
 ### Fixes
 
-(to be filled in by the dev leg on rework)
+1. [must-fix #1] Fixed in `src/graph_mcp/tools/service_principals.py` (lines around 128-137). `_parse_graph_datetime(start_date_time)` is now called inside a local `try`/`except ValueError` guard: on a parse failure it returns `error_envelope("invalid_argument", f"start_date_time is not a valid ISO 8601 date-time: {start_date_time!r}", False)` immediately, exactly as the finding's suggested fix specified, instead of letting the `ValueError` propagate out of the tool call. The `datetime.now(UTC)` default path (no `start_date_time` given) is unchanged.
+
+   Added a regression test, `tests/test_tools.py::test_sp_create_and_add_password_invalid_start_date_time_returns_structured_error` (also recorded as `TC11` with `"source": "dev"` in `docs/tickets/PRD-21618.ac.json`, since it covers an edge case the original AC/TC set didn't name): calls the tool with `start_date_time="not-a-date"` and asserts the result is `{"error": {"code": "invalid_argument", "retryable": false, ...}}` with the bad value quoted in the message, and that `POST .../addPassword` is never reached (the service-principal create step, which happens before date parsing, still runs).
+
+   Verified the fix two ways:
+   - **Red on the pre-fix code**: `git stash push -- src/graph_mcp/tools/service_principals.py` (keeping the new test in place) then `uv run pytest -q tests/test_tools.py::test_sp_create_and_add_password_invalid_start_date_time_returns_structured_error` reproduces the exact failure mode the review reported: `ToolError: Error executing tool graph_service_principal_create_and_add_password: Invalid isoformat string: 'not-a-date'`. `git stash pop` restored the fix.
+   - **Green on the fixed code**: same test passes in isolation and as part of the full suite.
+
+   Full gate after the fix, run on the branch already synced with `master @ 443fe48` (confirmed current — `git merge-base --is-ancestor origin/master HEAD` passes, no re-sync needed):
+   - `uv run pytest -q`: **210 passed, 1 failed** (same pre-existing `test_tools_list_snapshot` / `graph_list_user_groups` description-length failure already documented in the `[DEV]` stub and `TC10`'s evidence — unrelated to this module, reproduces identically on pristine `master`). 210 = the prior 209 + this round's 1 new regression test; 0 new failures.
+   - `uvx ruff check`: 48 errors total, identical count to pristine `master`; `grep` for `src/graph_mcp/tools/service_principals.py` and `tests/test_tools.py` in the output returns nothing — 0 new findings in the files this round touched.
+
+   No other code paths were touched; this is the only must-fix listed in Round 1.
