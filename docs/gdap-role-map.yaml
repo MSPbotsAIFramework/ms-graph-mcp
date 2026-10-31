@@ -205,3 +205,14 @@ graph_list_named_locations:
     purpose-built role for Policy.Read.All over conditionalAccess/namedLocations;
     not verified against a live tenant at design time (see ticket Open question Q1) --
     only this metadata row needs correcting if wrong, no code/contract change.
+graph_service_principal_create_and_add_password:
+  roles:
+  - Cloud Application Administrator
+  - Application Administrator
+  note: Finds or creates a service principal for the given appId, then adds it
+    a short-lived password credential (PRD-21618). Both Microsoft Learn
+    reference pages for POST /servicePrincipals and POST
+    /servicePrincipals/{id}/addPassword list these two built-in roles (plus
+    ownership-conditioned roles not listed here, since this tool is used by
+    an MSP admin acting on a client tenant's app, not the app's own owner) --
+    verified against Microsoft Learn 2026-10-31, not assumed.

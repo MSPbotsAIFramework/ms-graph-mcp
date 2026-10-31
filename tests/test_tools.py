@@ -69,6 +69,7 @@ EXPECTED_TOOLS = {
     "graph_start_cloud_sync": {"user_id"},
     "graph_list_gdap_roles": set(),
     "graph_list_named_locations": set(),
+    "graph_service_principal_create_and_add_password": {"app_id"},
 }
 
 # Tools that are not plain read-only queries (writes / mutations).
@@ -95,6 +96,7 @@ _NON_READ_ONLY = {
     "graph_cancel_calendar_event",
     "graph_transfer_onedrive",
     "graph_start_cloud_sync",
+    "graph_service_principal_create_and_add_password",
 }
 
 
@@ -180,7 +182,16 @@ async def test_tools_list_snapshot():
     # client secrets; no existing tool reads /applications, and computing
     # days_until_expiry is additive data on a new resource family, not a
     # mode flag on an existing tool.
-    assert len(names) <= 48, "tool count should stay within SOP's <=20 guideline (+28 justified)"
+    # +1 for graph_service_principal_create_and_add_password (PRD-21618, Rewst
+    # gap register item 54): minting an app-identity credential for an
+    # MFA-push flow needs a service principal's /addPassword, a distinct
+    # endpoint none of the existing user/group/license/mail/site/device/
+    # domain/calendar/conditional-access/offboarding tools can reach; the
+    # find-or-create half is folded into this one tool rather than split
+    # (see the calendar/mail notes above on rejecting mode-flag splits),
+    # since a service principal with no password credential is never
+    # independently useful for this use case.
+    assert len(names) <= 49, "tool count should stay within SOP's <=20 guideline (+29 justified)"
 
     by_name = {t.name: t for t in tools}
     for name, expected_required in EXPECTED_TOOLS.items():
@@ -4286,3 +4297,216 @@ async def test_list_named_locations_without_token_returns_no_token_envelope():
 
     assert result_by_id == NO_TOKEN
     assert result_list == NO_TOKEN
+
+
+# --- PRD-21618: graph_service_principal_create_and_add_password ----------
+
+
+def _sp_mcp(client):
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import service_principals
+
+    mcp = FastMCP(name="test")
+    service_principals.register(mcp, lambda: client)
+    return mcp
+
+
+async def _call_sp(client, **args):
+    mcp = _sp_mcp(client)
+    result = await mcp.call_tool("graph_service_principal_create_and_add_password", args)
+    return json.loads(result[0][0].text)
+
+
+@pytest.mark.asyncio
+async def test_sp_create_and_add_password_creates_when_no_match():
+    """TC1/AC1: zero existing service principals for app_id -> POST
+    /servicePrincipals creates one, addPassword mints a credential on the
+    new id, and the result reports created=true with the secret/key/window."""
+    client = _RoutedClient(
+        get_responses={"/servicePrincipals": {"value": []}},
+        post_responses={
+            "/servicePrincipals": {"id": "sp-new"},
+            "/servicePrincipals/sp-new/addPassword": {
+                "secretText": "s3cr3t",
+                "keyId": "key-1",
+                "displayName": "MSPbots MCP - Temporary Password",
+                "startDateTime": "2026-10-31T12:00:00Z",
+                "endDateTime": "2026-10-31T12:10:00Z",
+            },
+        },
+    )
+    payload = await _call_sp(client, app_id="app-1")
+
+    assert client.post_calls[0] == ("/servicePrincipals", {"appId": "app-1"})
+    assert client.post_calls[1][0] == "/servicePrincipals/sp-new/addPassword"
+    assert payload["created"] is True
+    assert payload["service_principal_id"] == "sp-new"
+    assert payload["app_id"] == "app-1"
+    assert payload["secret_text"] == "s3cr3t"
+    assert payload["key_id"] == "key-1"
+    assert payload["start_date_time"] == "2026-10-31T12:00:00Z"
+    assert payload["end_date_time"] == "2026-10-31T12:10:00Z"
+
+
+@pytest.mark.asyncio
+async def test_sp_create_and_add_password_reuses_existing_match():
+    """TC2/AC2: exactly one existing match -> POST /servicePrincipals is
+    NOT called, addPassword is called on the existing id, created=false."""
+    client = _RoutedClient(
+        get_responses={
+            "/servicePrincipals": {"value": [{"id": "sp-existing", "appId": "app-1"}]}
+        },
+        post_responses={
+            "/servicePrincipals/sp-existing/addPassword": {
+                "secretText": "s3cr3t2",
+                "keyId": "key-2",
+                "displayName": "MSPbots MCP - Temporary Password",
+                "startDateTime": "2026-10-31T12:00:00Z",
+                "endDateTime": "2026-10-31T12:10:00Z",
+            },
+        },
+    )
+    payload = await _call_sp(client, app_id="app-1")
+
+    assert "/servicePrincipals" not in [c[0] for c in client.post_calls]
+    assert client.post_calls == [
+        ("/servicePrincipals/sp-existing/addPassword", client.post_calls[0][1])
+    ]
+    assert payload["created"] is False
+    assert payload["service_principal_id"] == "sp-existing"
+
+
+@pytest.mark.asyncio
+async def test_sp_create_and_add_password_default_lifetime_is_ten_minutes():
+    """TC3/AC3: no start_date_time/lifetime_minutes given -> the addPassword
+    body's endDateTime is exactly 10 minutes after "now", and startDateTime
+    is omitted from the body entirely (letting Graph apply its own "now")."""
+    from datetime import UTC, datetime, timedelta
+
+    client = _RoutedClient(
+        get_responses={"/servicePrincipals": {"value": []}},
+        post_responses={
+            "/servicePrincipals": {"id": "sp-new"},
+            "/servicePrincipals/sp-new/addPassword": {"secretText": "x", "keyId": "k"},
+        },
+    )
+    before = datetime.now(UTC)
+    await _call_sp(client, app_id="app-1")
+    after = datetime.now(UTC)
+
+    body = client.post_calls[1][1]["passwordCredential"]
+    assert "startDateTime" not in body
+    end = datetime.strptime(body["endDateTime"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    assert before + timedelta(minutes=10) - timedelta(seconds=2) <= end
+    assert end <= after + timedelta(minutes=10) + timedelta(seconds=2)
+
+
+@pytest.mark.asyncio
+async def test_sp_create_and_add_password_custom_lifetime_and_start():
+    """TC4/AC4: lifetime_minutes=30 with an explicit start_date_time ->
+    endDateTime is exactly start_date_time + 30 minutes, and startDateTime
+    is echoed into the request body as given."""
+    client = _RoutedClient(
+        get_responses={"/servicePrincipals": {"value": []}},
+        post_responses={
+            "/servicePrincipals": {"id": "sp-new"},
+            "/servicePrincipals/sp-new/addPassword": {"secretText": "x", "keyId": "k"},
+        },
+    )
+    await _call_sp(
+        client, app_id="app-1", start_date_time="2026-11-01T00:00:00Z", lifetime_minutes=30
+    )
+
+    body = client.post_calls[1][1]["passwordCredential"]
+    assert body["startDateTime"] == "2026-11-01T00:00:00Z"
+    assert body["endDateTime"] == "2026-11-01T00:30:00Z"
+
+
+@pytest.mark.asyncio
+async def test_sp_create_and_add_password_invalid_start_date_time_returns_structured_error():
+    """Review round 1 regression (PRD-21618): a malformed start_date_time
+    must not raise an unhandled ValueError out of the tool call -- it has to
+    surface as the connector's structured error envelope, same as every
+    other error path in this tool. Neither POST call should fire once the
+    date fails to parse."""
+    client = _RoutedClient(
+        get_responses={"/servicePrincipals": {"value": []}},
+        post_responses={"/servicePrincipals": {"id": "sp-new"}},
+    )
+    payload = await _call_sp(client, app_id="app-1", start_date_time="not-a-date")
+
+    assert payload["error"]["code"] == "invalid_argument"
+    assert payload["error"]["retryable"] is False
+    assert "not-a-date" in payload["error"]["message"]
+    assert client.post_calls == [("/servicePrincipals", {"appId": "app-1"})]
+
+
+@pytest.mark.asyncio
+async def test_sp_create_and_add_password_create_failure_returns_envelope():
+    """TC5/AC5: a 404 from the create-service-principal step (unknown
+    app_id) surfaces as the structured not_found envelope, not an exception
+    propagating out of the tool call."""
+    client = _RoutedClient(
+        get_responses={"/servicePrincipals": {"value": []}},
+        post_responses={"/servicePrincipals": GraphError(404, "appId not found")},
+    )
+    payload = await _call_sp(client, app_id="bad-app")
+
+    assert payload["error"]["code"] == "not_found"
+    assert payload["error"]["retryable"] is False
+
+
+@pytest.mark.asyncio
+async def test_sp_create_and_add_password_ambiguous_match_returns_structured_error():
+    """TC6/AC6: more than one existing service principal for app_id ->
+    structured service_principal_ambiguous error listing the candidate ids,
+    and neither POST /servicePrincipals nor POST .../addPassword is called."""
+    client = _RoutedClient(
+        get_responses={"/servicePrincipals": {"value": [{"id": "sp-a"}, {"id": "sp-b"}]}},
+    )
+    payload = await _call_sp(client, app_id="app-1")
+
+    assert payload["error"]["code"] == "service_principal_ambiguous"
+    assert payload["error"]["candidates"] == ["sp-a", "sp-b"]
+    assert client.post_calls == []
+
+
+@pytest.mark.asyncio
+async def test_sp_create_and_add_password_without_token_returns_no_token_envelope():
+    """TC8/AC8: no X-Ms-Graph-Token header (client_factory() -> None) ->
+    the connector's standard NO_TOKEN envelope, unchanged from every other
+    tool's behavior."""
+    from graph_mcp.tools._common import NO_TOKEN
+
+    mcp = _sp_mcp(None)
+    result = (
+        await mcp.call_tool(
+            "graph_service_principal_create_and_add_password", {"app_id": "app-1"}
+        )
+    )[0][0].text
+    assert result == NO_TOKEN
+
+
+@pytest.mark.asyncio
+async def test_sp_create_and_add_password_secret_appears_exactly_once():
+    """TC9/AC9: secret_text appears exactly once in the JSON payload; there
+    is no logging call anywhere in this code path to leak it a second time."""
+    client = _RoutedClient(
+        get_responses={"/servicePrincipals": {"value": []}},
+        post_responses={
+            "/servicePrincipals": {"id": "sp-new"},
+            "/servicePrincipals/sp-new/addPassword": {
+                "secretText": "only-once-secret",
+                "keyId": "k",
+            },
+        },
+    )
+    mcp = _sp_mcp(client)
+    raw = (
+        await mcp.call_tool(
+            "graph_service_principal_create_and_add_password", {"app_id": "app-1"}
+        )
+    )[0][0].text
+
+    assert raw.count("only-once-secret") == 1
