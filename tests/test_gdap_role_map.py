@@ -74,7 +74,7 @@ async def test_gdap_role_map_matches_registered_tools_and_readme():
     role_map = yaml.safe_load(YAML_PATH.read_text(encoding="utf-8"))
     readme_rows = _readme_role_rows()
 
-    assert len(role_map) == 46, f"expected 46 role-map entries, found {len(role_map)}"
+    assert len(role_map) == 48, f"expected 48 role-map entries, found {len(role_map)}"
     problems = check_consistency(registered, role_map, readme_rows)
     assert not problems, "\n".join(problems)
 

@@ -50,6 +50,7 @@ EXPECTED_TOOLS = {
     "graph_list_messages": set(),
     "graph_get_message": {"message_id"},
     "graph_read_mail_attachment": {"message_id", "attachment_id"},
+    "graph_delete_message": {"message_id"},
     "graph_search_sites": {"query"},
     "graph_list_drive_items": {"drive_id"},
     "graph_get_file": {"drive_id", "item_id"},
@@ -67,6 +68,7 @@ EXPECTED_TOOLS = {
     "graph_transfer_onedrive": {"source_user_id", "recipient_user_id"},
     "graph_start_cloud_sync": {"user_id"},
     "graph_list_gdap_roles": set(),
+    "graph_list_named_locations": set(),
 }
 
 # Tools that are not plain read-only queries (writes / mutations).
@@ -87,6 +89,7 @@ _NON_READ_ONLY = {
     "graph_write_file_text",
     "graph_create_file_text",
     "graph_delete_file",
+    "graph_delete_message",
     "graph_remove_managed_device",
     "graph_create_calendar_event",
     "graph_cancel_calendar_event",
@@ -160,12 +163,24 @@ async def test_tools_list_snapshot():
     # assignments (graph_list_user_groups deliberately excludes them, see its
     # own /memberOf comment), so this is a distinct endpoint, not a mode flag
     # on an existing tool.
+    # +1 for graph_list_named_locations (PRD-21580, Rewst gap register item
+    # 12): no existing tool reads identity/conditionalAccess/namedLocations,
+    # so resolving a CA policy's location id to its IP ranges/countries is a
+    # distinct endpoint; the by-id and no-id-list cases are collapsed into
+    # one optional-parameter tool rather than split (see graph_list_domains,
+    # which has no id parameter for the same "small, bounded resource" reason).
+    # +1 for graph_delete_message (PRD-21578): Ginko IT's malicious-email-removal
+    # Rewst flow needs to delete one already-identified message by id; the
+    # mail domain's three existing tools are read/send only, and this follows
+    # the same idempotent-delete pattern as graph_delete_file/
+    # graph_remove_managed_device rather than overloading graph_get_message
+    # with a destructive mode flag.
     # +1 for graph_list_applications (PRD-21582, Rewst gap register item 14):
     # replaces a Rewst flow that alerts on expiring Entra app-registration
     # client secrets; no existing tool reads /applications, and computing
     # days_until_expiry is additive data on a new resource family, not a
     # mode flag on an existing tool.
-    assert len(names) <= 46, "tool count should stay within SOP's <=20 guideline (+26 justified)"
+    assert len(names) <= 48, "tool count should stay within SOP's <=20 guideline (+28 justified)"
 
     by_name = {t.name: t for t in tools}
     for name, expected_required in EXPECTED_TOOLS.items():
@@ -1143,6 +1158,100 @@ async def test_read_attachment_rejects_ole_file_that_is_not_xls():
     ole_garbage = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\0" * 600
     payload, _ = await _read_attachment(_file_meta("x.xls"), ole_garbage)
     assert payload["error"]["code"] == "invalid_argument"
+
+
+class _DeleteMessageClient:
+    """GraphClient stand-in for graph_delete_message (PRD-21578): DELETE can
+    succeed, 404 (already gone -- must still report success), or raise any
+    other GraphError (must surface as the structured envelope, not success)."""
+
+    def __init__(self, delete_error: GraphError | None = None):
+        self._delete_error = delete_error
+        self.calls: list[str] = []
+
+    async def delete(self, path: str):
+        self.calls.append(path)
+        if self._delete_error is not None:
+            raise self._delete_error
+        return None
+
+
+def _delete_message_mcp(delete_error: GraphError | None = None):
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import mail
+
+    mcp = FastMCP(name="test")
+    client = _DeleteMessageClient(delete_error)
+    mail.register(mcp, lambda: client)
+    return mcp, client
+
+
+@pytest.mark.asyncio
+async def test_delete_message_with_explicit_user_id():
+    """TC1/AC1: an explicit user_id routes through /users/{id}, the app-only
+    / "someone else's mailbox" shape."""
+    mcp, client = _delete_message_mcp()
+
+    _, structured = await mcp.call_tool(
+        "graph_delete_message", {"message_id": "m1", "user_id": "u1"}
+    )
+    payload = json.loads(structured["result"])
+
+    assert client.calls == ["/users/u1/messages/m1"]
+    assert payload == {"user_id": "u1", "message_id": "m1", "deleted": True}
+
+
+@pytest.mark.asyncio
+async def test_delete_message_defaults_to_me():
+    """TC2/AC2: omitting user_id routes through /me, same convention as
+    graph_get_message."""
+    mcp, client = _delete_message_mcp()
+
+    _, structured = await mcp.call_tool("graph_delete_message", {"message_id": "m1"})
+    payload = json.loads(structured["result"])
+
+    assert client.calls == ["/me/messages/m1"]
+    assert payload == {"user_id": "me", "message_id": "m1", "deleted": True}
+
+
+@pytest.mark.asyncio
+async def test_delete_message_is_idempotent_on_404():
+    """TC3/AC3: deleting an already-gone message_id is success, not an
+    error -- matches graph_delete_file/graph_remove_managed_device."""
+    mcp, client = _delete_message_mcp(delete_error=GraphError(404, "not found"))
+
+    _, structured = await mcp.call_tool("graph_delete_message", {"message_id": "gone"})
+    payload = json.loads(structured["result"])
+
+    assert payload == {"user_id": "me", "message_id": "gone", "deleted": True}
+
+
+@pytest.mark.asyncio
+async def test_delete_message_surfaces_non_404_error():
+    """TC4/AC4: a non-404 Graph error (e.g. 403 when the token lacks
+    Mail.ReadWrite) must come back as the structured envelope, with no
+    "deleted": true anywhere in the response."""
+    mcp, client = _delete_message_mcp(delete_error=GraphError(403, "forbidden"))
+
+    _, structured = await mcp.call_tool("graph_delete_message", {"message_id": "m1"})
+    payload = json.loads(structured["result"])
+
+    assert "deleted" not in payload
+    assert payload["error"]["code"] == "unauthorized"
+
+
+@pytest.mark.asyncio
+async def test_delete_message_annotations():
+    """TC5/AC5: mirrors the three existing delete tools' annotation shape --
+    not read-only, destructive, idempotent."""
+    mcp = create_mcp_server(Settings())
+    tools = {t.name: t for t in await mcp.list_tools()}
+    annotations = tools["graph_delete_message"].annotations
+
+    assert annotations.readOnlyHint is False
+    assert annotations.destructiveHint is True
+    assert annotations.idempotentHint is True
 
 
 # --- PRD-20219: W2 onboarding gaps -------------------------------------------
@@ -3599,6 +3708,105 @@ async def test_send_mail_logs_attachment_metadata(fetch, caplog):
     assert "source=url" in caplog.text
 
 
+# --- PRD-21676: isAssignableToRole on graph_get_group / graph_list_user_groups ---
+
+
+@pytest.mark.asyncio
+async def test_get_group_returns_is_assignable_to_role_true_for_role_assignable_group():
+    """AC1/TC1: a role-assignable group's graph_get_group response must
+    include isAssignableToRole: true, and the field must be requested via
+    $select."""
+    from graph_mcp.tools import groups
+
+    mcp, client = _register(groups)
+    client._result = {"id": "g1", "mailEnabled": False, "isAssignableToRole": True}
+    result = json.loads(
+        (await mcp.call_tool("graph_get_group", {"group_id": "g1"}))[0][0].text
+    )
+
+    assert result["isAssignableToRole"] is True
+    assert "isAssignableToRole" in client.calls[0][1]["$select"]
+
+
+@pytest.mark.asyncio
+async def test_get_group_passes_through_null_is_assignable_to_role_for_ordinary_group():
+    """AC2/TC2: Graph returns null (not false) for a group that was never
+    provisioned as role-assignable; the tool must pass that raw value
+    through unchanged rather than coercing it to false."""
+    from graph_mcp.tools import groups
+
+    mcp, client = _register(groups)
+    client._result = {"id": "g2", "mailEnabled": False, "isAssignableToRole": None}
+    result = json.loads(
+        (await mcp.call_tool("graph_get_group", {"group_id": "g2"}))[0][0].text
+    )
+
+    assert result["isAssignableToRole"] is None
+    assert result["isAssignableToRole"] is not True
+
+
+@pytest.mark.asyncio
+async def test_get_group_keeps_existing_classification_fields_unchanged():
+    """AC4/TC5: adding isAssignableToRole must not disturb the other
+    classification fields graph_get_group already returns (mailEnabled,
+    securityEnabled, groupTypes, onPremisesSyncEnabled, sync_source)."""
+    from graph_mcp.tools import groups
+
+    mcp, client = _register(groups)
+    client._result = {
+        "id": "g1",
+        "groupTypes": ["Unified"],
+        "securityEnabled": True,
+        "mailEnabled": True,
+        "onPremisesSyncEnabled": True,
+        "isAssignableToRole": True,
+    }
+    result = json.loads(
+        (await mcp.call_tool("graph_get_group", {"group_id": "g1"}))[0][0].text
+    )
+
+    assert result["mailEnabled"] is True
+    assert result["securityEnabled"] is True
+    assert result["groupTypes"] == ["Unified"]
+    assert result["onPremisesSyncEnabled"] is True
+    assert result["sync_source"] == "on-premises"
+    assert result["isAssignableToRole"] is True
+
+
+@pytest.mark.asyncio
+async def test_list_user_groups_includes_is_assignable_to_role_per_group():
+    """AC5/TC7: every entry graph_list_user_groups returns must carry the
+    correct isAssignableToRole for that specific group, and the field must
+    be requested via $select."""
+    from graph_mcp.tools import groups
+
+    mcp, client = _register(groups)
+    client._result = {
+        "value": [
+            {
+                "id": "g1",
+                "groupTypes": [],
+                "mailEnabled": False,
+                "isAssignableToRole": True,
+            },
+            {
+                "id": "g2",
+                "groupTypes": [],
+                "mailEnabled": False,
+                "isAssignableToRole": None,
+            },
+        ]
+    }
+    result = json.loads(
+        (await mcp.call_tool("graph_list_user_groups", {"user_id": "u1"}))[0][0].text
+    )
+
+    by_id = {g["id"]: g for g in result["groups"]}
+    assert by_id["g1"]["isAssignableToRole"] is True
+    assert by_id["g2"]["isAssignableToRole"] is None
+    assert "isAssignableToRole" in client.calls[0][1]["$select"]
+
+
 # --- PRD-21391: graph_list_user_roles ---------------------------------------
 
 
@@ -3923,3 +4131,156 @@ async def test_graph_list_applications_negative_days_until_expiry_for_expired_se
     result = json.loads((await mcp.call_tool("graph_list_applications", {}))[0][0].text)
 
     assert result["applications"][0]["secrets"][0]["days_until_expiry"] < 0
+
+
+# --- PRD-21580: graph_list_named_locations -----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_named_locations_by_id_shapes_ip_location():
+    """TC1/AC1: an ipNamedLocation response must come back with a derived
+    location_type="ip" field, keeping ipRanges/isTrusted unchanged."""
+    from graph_mcp.tools import conditional_access
+
+    mcp, client = _register(conditional_access)
+    client._result = {
+        "id": "loc-1",
+        "displayName": "Corporate network",
+        "@odata.type": "#microsoft.graph.ipNamedLocation",
+        "isTrusted": True,
+        "ipRanges": [{"@odata.type": "#microsoft.graph.iPv4CidrRange", "cidrAddress": "203.0.113.0/24"}],
+    }
+    result = json.loads(
+        (await mcp.call_tool("graph_list_named_locations", {"location_id": "loc-1"}))[0][0].text
+    )
+
+    assert client.calls[0][0] == "/identity/conditionalAccess/namedLocations/loc-1"
+    assert result["location_type"] == "ip"
+    assert result["isTrusted"] is True
+    assert result["ipRanges"] == [
+        {"@odata.type": "#microsoft.graph.iPv4CidrRange", "cidrAddress": "203.0.113.0/24"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_list_named_locations_by_id_shapes_country_location():
+    """TC2/AC2: a countryNamedLocation response must come back with
+    location_type="country", keep countriesAndRegions, and must not
+    fabricate an isTrusted key that only applies to IP locations."""
+    from graph_mcp.tools import conditional_access
+
+    mcp, client = _register(conditional_access)
+    client._result = {
+        "id": "loc-2",
+        "displayName": "Blocked countries",
+        "@odata.type": "#microsoft.graph.countryNamedLocation",
+        "countriesAndRegions": ["CU", "IR", "KP"],
+        "includeUnknownCountriesAndRegions": False,
+    }
+    result = json.loads(
+        (await mcp.call_tool("graph_list_named_locations", {"location_id": "loc-2"}))[0][0].text
+    )
+
+    assert result["location_type"] == "country"
+    assert result["countriesAndRegions"] == ["CU", "IR", "KP"]
+    assert "isTrusted" not in result
+
+
+@pytest.mark.asyncio
+async def test_list_named_locations_without_id_lists_all():
+    """TC3/AC3: with no location_id, the request must hit the collection
+    endpoint (no id segment) and the result must contain every location
+    returned, each shaped with a location_type."""
+    from graph_mcp.tools import conditional_access
+
+    mcp, client = _register(conditional_access)
+    client._result = {
+        "value": [
+            {
+                "id": "loc-1",
+                "displayName": "Corporate network",
+                "@odata.type": "#microsoft.graph.ipNamedLocation",
+                "isTrusted": True,
+                "ipRanges": [],
+            },
+            {
+                "id": "loc-2",
+                "displayName": "Blocked countries",
+                "@odata.type": "#microsoft.graph.countryNamedLocation",
+                "countriesAndRegions": ["CU"],
+            },
+        ]
+    }
+    result = json.loads((await mcp.call_tool("graph_list_named_locations", {}))[0][0].text)
+
+    assert client.calls[0][0] == "/identity/conditionalAccess/namedLocations"
+    assert result["count"] == 2
+    types = {loc["id"]: loc["location_type"] for loc in result["named_locations"]}
+    assert types == {"loc-1": "ip", "loc-2": "country"}
+    assert result["has_more"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_named_locations_without_id_reports_has_more():
+    """TC4/AC4: a collection response carrying @odata.nextLink must come
+    back with has_more=true and a next_page_token (the $skiptoken, not the
+    full URL — same contract as graph_list_group_members), and must not
+    return more than the connector's cap worth of items in one call."""
+    from graph_mcp.tools import conditional_access
+
+    mcp, client = _register(conditional_access)
+    client._result = {
+        "value": [{"id": f"loc-{i}", "@odata.type": "#microsoft.graph.ipNamedLocation"} for i in range(3)],
+        "@odata.nextLink": "https://graph.microsoft.com/v1.0/identity/conditionalAccess/namedLocations?$skiptoken=page2",
+    }
+    result = json.loads(
+        (await mcp.call_tool("graph_list_named_locations", {"max_results": 2}))[0][0].text
+    )
+
+    assert result["has_more"] is True
+    assert result["next_page_token"] == "page2"
+    assert len(result["named_locations"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_list_named_locations_unknown_id_returns_not_found_envelope():
+    """TC5/AC5: an unknown/deleted location_id must come back as the
+    structured not_found envelope, not an exception propagating out of the
+    tool call."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import conditional_access
+
+    class _NotFoundClient:
+        async def get(self, path: str, params=None, extra_headers=None):
+            raise GraphError(404, "Resource 'bad-loc' does not exist.")
+
+    mcp = FastMCP(name="test")
+    conditional_access.register(mcp, lambda: _NotFoundClient())
+
+    result = json.loads(
+        (await mcp.call_tool("graph_list_named_locations", {"location_id": "bad-loc"}))[0][0].text
+    )
+
+    assert result["error"]["code"] == "not_found"
+    assert result["error"]["retryable"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_named_locations_without_token_returns_no_token_envelope():
+    """TC6/AC6: missing X-Ms-Graph-Token (client_factory() -> None) must
+    return the connector's standard NO_TOKEN envelope, with or without
+    location_id -- identical to every other tool's behavior."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import conditional_access
+    from graph_mcp.tools._common import NO_TOKEN
+
+    mcp = FastMCP(name="test")
+    conditional_access.register(mcp, lambda: None)
+
+    result_by_id = (await mcp.call_tool("graph_list_named_locations", {"location_id": "loc-1"}))[0][0].text
+    result_list = (await mcp.call_tool("graph_list_named_locations", {}))[0][0].text
+
+    assert result_by_id == NO_TOKEN
+    assert result_list == NO_TOKEN
