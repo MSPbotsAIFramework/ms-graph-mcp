@@ -45,6 +45,7 @@ EXPECTED_TOOLS = {
     "graph_assign_license": {"user_id"},
     "graph_reprocess_license": {"user_id"},
     "graph_list_domains": set(),
+    "graph_list_applications": set(),
     "graph_send_mail": {"to_recipients", "subject", "body"},
     "graph_list_messages": set(),
     "graph_get_message": {"message_id"},
@@ -159,7 +160,12 @@ async def test_tools_list_snapshot():
     # assignments (graph_list_user_groups deliberately excludes them, see its
     # own /memberOf comment), so this is a distinct endpoint, not a mode flag
     # on an existing tool.
-    assert len(names) <= 45, "tool count should stay within SOP's <=20 guideline (+25 justified)"
+    # +1 for graph_list_applications (PRD-21582, Rewst gap register item 14):
+    # replaces a Rewst flow that alerts on expiring Entra app-registration
+    # client secrets; no existing tool reads /applications, and computing
+    # days_until_expiry is additive data on a new resource family, not a
+    # mode flag on an existing tool.
+    assert len(names) <= 46, "tool count should stay within SOP's <=20 guideline (+26 justified)"
 
     by_name = {t.name: t for t in tools}
     for name, expected_required in EXPECTED_TOOLS.items():
@@ -3715,3 +3721,205 @@ async def test_graph_list_user_roles_unknown_user_returns_404_envelope():
 
     assert result["error"]["code"] == "not_found"
     assert result["error"]["retryable"] is False
+
+
+def test_applications_days_until_expiry_arithmetic():
+    """Pure-function exactness check for days_until_expiry (PRD-21582 AC1/
+    AC6): both `now` and `end_date_time` are fixed inputs here, decoupled
+    from wall-clock timing, so the day-count math itself is verified exactly
+    rather than only its sign."""
+    import datetime as dt
+
+    from graph_mcp.tools.applications import _days_until_expiry
+
+    now = dt.datetime(2026, 11, 1, tzinfo=dt.timezone.utc)
+    assert _days_until_expiry("2026-11-17T00:00:00Z", now) == 16
+    assert _days_until_expiry("2026-10-15T00:00:00Z", now) == -17
+    assert _days_until_expiry(None, now) is None
+
+
+@pytest.mark.asyncio
+async def test_graph_list_applications_returns_secret_with_days_until_expiry():
+    """TC1/AC1: a known app registration with a non-expired client secret
+    must come back with key_id/display_name/start_date_time/end_date_time/
+    hint, and a positive days_until_expiry. The exact day-count arithmetic
+    is covered by test_applications_days_until_expiry_arithmetic above; this
+    test only needs the sign, since it goes through the tool's real
+    datetime.now() rather than an injected clock."""
+    import datetime as dt
+
+    from graph_mcp.tools import applications
+
+    future = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=30)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    mcp, client = _register(applications)
+    client._result = {
+        "value": [
+            {
+                "appId": "app-1",
+                "displayName": "Ginko-RMM-Sync",
+                "passwordCredentials": [
+                    {
+                        "keyId": "key-1",
+                        "displayName": "prod-secret",
+                        "startDateTime": "2026-01-15T00:00:00Z",
+                        "endDateTime": future,
+                        "hint": "ab12",
+                    }
+                ],
+            }
+        ]
+    }
+    result = json.loads((await mcp.call_tool("graph_list_applications", {}))[0][0].text)
+
+    assert client.calls[0][0] == "/applications"
+    assert client.calls[0][1]["$select"] == "appId,displayName,passwordCredentials"
+    app = result["applications"][0]
+    assert app["app_id"] == "app-1"
+    assert app["display_name"] == "Ginko-RMM-Sync"
+    secret = app["secrets"][0]
+    assert secret["key_id"] == "key-1"
+    assert secret["display_name"] == "prod-secret"
+    assert secret["start_date_time"] == "2026-01-15T00:00:00Z"
+    assert secret["end_date_time"] == future
+    assert secret["hint"] == "ab12"
+    assert secret["days_until_expiry"] > 0
+
+
+@pytest.mark.asyncio
+async def test_graph_list_applications_includes_app_with_no_secrets():
+    """TC2/AC2: an app registration with no passwordCredentials still
+    appears in the result with secrets: [] -- not dropped, not an error."""
+    from graph_mcp.tools import applications
+
+    mcp, client = _register(applications)
+    client._result = {
+        "value": [
+            {"appId": "app-cert-only", "displayName": "Cert-only-app", "passwordCredentials": []},
+            {"appId": "app-no-key", "displayName": "No-key-field-app"},
+        ]
+    }
+    result = json.loads((await mcp.call_tool("graph_list_applications", {}))[0][0].text)
+
+    assert result["count"] == 2
+    assert result["applications"][0]["secrets"] == []
+    assert result["applications"][1]["secrets"] == []
+
+
+@pytest.mark.asyncio
+async def test_graph_list_applications_paginates_one_page_per_call():
+    """TC3/AC3: more applications than max_results returns has_more=true and
+    a next_page_token; passing that token back in fetches the remainder with
+    no overlap or gap -- mirrors graph_list_users's one-page-per-call
+    contract (test_list_users_stops_paginating_at_max_results above)."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import applications
+
+    mcp = FastMCP(name="test")
+    client = _QueuedClient(
+        [
+            {
+                "value": [{"appId": f"app-{i}", "displayName": f"App {i}"} for i in range(3)],
+                "@odata.nextLink": "https://graph.microsoft.com/v1.0/applications?$skiptoken=page2",
+            },
+            {"value": [{"appId": "app-3", "displayName": "App 3"}]},
+        ]
+    )
+    applications.register(mcp, lambda: client)
+
+    _, first = await mcp.call_tool("graph_list_applications", {"max_results": 3})
+    page1 = json.loads(first["result"])
+    assert page1["count"] == 3
+    assert page1["has_more"] is True
+    assert page1["next_page_token"] == "page2"
+    assert len(client.calls) == 1
+
+    _, second = await mcp.call_tool(
+        "graph_list_applications", {"max_results": 3, "page_token": page1["next_page_token"]}
+    )
+    page2 = json.loads(second["result"])
+    assert page2["count"] == 1
+    assert page2["has_more"] is False
+    assert page2["next_page_token"] is None
+    assert client.calls[1][1]["$skiptoken"] == "page2"
+
+    seen = {a["app_id"] for a in page1["applications"]} | {a["app_id"] for a in page2["applications"]}
+    assert seen == {"app-0", "app-1", "app-2", "app-3"}
+
+
+@pytest.mark.asyncio
+async def test_graph_list_applications_issues_get_only():
+    """TC4/AC4: across a result carrying application + secret data, the
+    fake Graph server must record only a GET for this tool -- it has no
+    write path at all."""
+    from graph_mcp.tools import applications
+
+    mcp, client = _register(applications)
+    client._result = {
+        "value": [
+            {
+                "appId": "app-1",
+                "displayName": "Ginko-RMM-Sync",
+                "passwordCredentials": [{"keyId": "key-1", "endDateTime": "2026-11-15T00:00:00Z"}],
+            }
+        ]
+    }
+    await mcp.call_tool("graph_list_applications", {})
+
+    assert client.methods == ["GET"]
+
+
+@pytest.mark.asyncio
+async def test_graph_list_applications_empty_tenant():
+    """TC5/AC5: a tenant with zero application registrations returns
+    {count: 0, applications: [], has_more: false, next_page_token: null},
+    not an error."""
+    from graph_mcp.tools import applications
+
+    mcp, client = _register(applications)
+    client._result = {"value": []}
+    result = json.loads((await mcp.call_tool("graph_list_applications", {}))[0][0].text)
+
+    assert result == {
+        "count": 0,
+        "applications": [],
+        "has_more": False,
+        "next_page_token": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_graph_list_applications_negative_days_until_expiry_for_expired_secret():
+    """TC6/AC6: a client secret whose end_date_time is already in the past
+    comes back with a negative days_until_expiry, distinguishing "already
+    expired" from "expiring soon" without the caller parsing dates itself."""
+    import datetime as dt
+
+    from graph_mcp.tools import applications
+
+    past = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=10)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    mcp, client = _register(applications)
+    client._result = {
+        "value": [
+            {
+                "appId": "app-1",
+                "displayName": "Stale-app",
+                "passwordCredentials": [
+                    {
+                        "keyId": "key-1",
+                        "displayName": "old-secret",
+                        "startDateTime": "2025-01-01T00:00:00Z",
+                        "endDateTime": past,
+                        "hint": "cd34",
+                    }
+                ],
+            }
+        ]
+    }
+    result = json.loads((await mcp.call_tool("graph_list_applications", {}))[0][0].text)
+
+    assert result["applications"][0]["secrets"][0]["days_until_expiry"] < 0

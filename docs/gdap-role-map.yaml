@@ -103,6 +103,12 @@ graph_list_domains:
   roles:
   - Directory Readers
   note: 'Read-only: lists the tenant''s verified domains.'
+graph_list_applications:
+  roles:
+  - Directory Readers
+  note: 'Read-only: lists Entra ID app registrations and their client-secret
+    expiry metadata. Role is assumed by analogy with this connector''s other
+    read-only directory listings, not yet verified on a real tenant (PRD-21582).'
 graph_send_mail:
   roles: null
   note: No Entra role grants delegated mail-send; gated by Mail.Send consent, not
