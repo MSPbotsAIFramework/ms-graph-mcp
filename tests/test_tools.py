@@ -3940,7 +3940,7 @@ def test_applications_days_until_expiry_arithmetic():
 
     from graph_mcp.tools.applications import _days_until_expiry
 
-    now = dt.datetime(2026, 11, 1, tzinfo=dt.timezone.utc)
+    now = dt.datetime(2026, 11, 1, tzinfo=dt.UTC)
     assert _days_until_expiry("2026-11-17T00:00:00Z", now) == 16
     assert _days_until_expiry("2026-10-15T00:00:00Z", now) == -17
     assert _days_until_expiry(None, now) is None
@@ -3958,7 +3958,7 @@ async def test_graph_list_applications_returns_secret_with_days_until_expiry():
 
     from graph_mcp.tools import applications
 
-    future = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=30)).strftime(
+    future = (dt.datetime.now(dt.UTC) + dt.timedelta(days=30)).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
     mcp, client = _register(applications)
@@ -4053,8 +4053,10 @@ async def test_graph_list_applications_paginates_one_page_per_call():
     assert page2["next_page_token"] is None
     assert client.calls[1][1]["$skiptoken"] == "page2"
 
-    seen = {a["app_id"] for a in page1["applications"]} | {a["app_id"] for a in page2["applications"]}
-    assert seen == {"app-0", "app-1", "app-2", "app-3"}
+    page1_ids = {a["app_id"] for a in page1["applications"]}
+    page2_ids = {a["app_id"] for a in page2["applications"]}
+    assert page1_ids | page2_ids == {"app-0", "app-1", "app-2", "app-3"}
+    assert page1_ids.isdisjoint(page2_ids)
 
 
 @pytest.mark.asyncio
@@ -4107,7 +4109,7 @@ async def test_graph_list_applications_negative_days_until_expiry_for_expired_se
 
     from graph_mcp.tools import applications
 
-    past = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=10)).strftime(
+    past = (dt.datetime.now(dt.UTC) - dt.timedelta(days=10)).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
     mcp, client = _register(applications)

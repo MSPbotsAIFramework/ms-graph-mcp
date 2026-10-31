@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated
 
 from mcp.server.fastmcp import FastMCP
@@ -94,7 +94,7 @@ def register(mcp: FastMCP, client_factory: Callable[[], GraphClient | None]) -> 
         try:
             result = await client.get("/applications", params=params)
             raw_apps = result.get("value", [])[:max_results]
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             applications = [_map_application(a, now) for a in raw_apps]
             next_token = skiptoken(result.get("@odata.nextLink"))
             return dump_json_capped(
