@@ -1,0 +1,78 @@
+[
+  {
+    "id": "TC1",
+    "ac": "AC1",
+    "text": "Given a fake Graph client returns zero matches for GET /servicePrincipals?$filter=appId eq '<app_id>', When graph_service_principal_create_and_add_password is called with that app_id, Then POST /servicePrincipals is called with {\"appId\": \"<app_id>\"}, POST /servicePrincipals/{new_id}/addPassword is called next, and the result has created=true with the new service principal's id, a secret_text, a key_id, and a validity window.",
+    "type": "auto",
+    "tests": []
+  },
+  {
+    "id": "TC2",
+    "ac": "AC2",
+    "text": "Given a fake Graph client returns exactly one match for the same filter, When the tool is called, Then POST /servicePrincipals is NOT called, POST /servicePrincipals/{existing_id}/addPassword is called on the existing id, and the result has created=false.",
+    "type": "auto",
+    "tests": []
+  },
+  {
+    "id": "TC3",
+    "ac": "AC3",
+    "text": "Given no start_date_time/lifetime_minutes arguments, When the tool is called, Then the addPassword request body's endDateTime is exactly 10 minutes after its startDateTime.",
+    "type": "auto",
+    "tests": []
+  },
+  {
+    "id": "TC4",
+    "ac": "AC4",
+    "text": "Given lifetime_minutes=30 and an explicit start_date_time, When the tool is called, Then the addPassword request body's endDateTime is exactly start_date_time + 30 minutes.",
+    "type": "auto",
+    "tests": []
+  },
+  {
+    "id": "TC5",
+    "ac": "AC5",
+    "text": "Given a fake Graph client raises a 404/400 for the app_id used in POST /servicePrincipals, When the tool is called, Then the result is a structured {\"error\": {...}} envelope, not an exception propagating out of the tool call.",
+    "type": "auto",
+    "tests": []
+  },
+  {
+    "id": "TC6",
+    "ac": "AC6",
+    "text": "Given a fake Graph client returns two matches for the filter, When the tool is called, Then the result is {\"error\": {\"code\": \"service_principal_ambiguous\", ..., \"candidates\": [id1, id2]}} and neither POST /servicePrincipals nor POST .../addPassword is called.",
+    "type": "auto",
+    "tests": []
+  },
+  {
+    "id": "TC7",
+    "ac": "AC7",
+    "type": "manual",
+    "steps": "Against a real Entra ID tenant whose app registration has not been granted Application.ReadWrite.All (or has not yet re-consented after it is added to the platform's requested scope set), call graph_service_principal_create_and_add_password with a valid app_id for that tenant.",
+    "expect": "The result is {\"error\": {\"code\": \"unauthorized\", ...}}, surfacing Graph's 403, not a stack trace and not a silent success.",
+    "text": "Given a real Entra ID tenant whose app registration has not been granted Application.ReadWrite.All, When the tool is called, Then Graph's 403 surfaces as {\"error\": {\"code\": \"unauthorized\", ...}}.",
+    "result": "blocked",
+    "evidence": "Needs a real vendor account / live tenant in a specific un-consented state; none available in this environment. Not a blocker per references/mcp-track.md section 3 (\"missing a real vendor account does not block this track\"). The underlying 401/403 -> unauthorized classification code path is already covered by existing tests for other tools and is not new code introduced by this ticket."
+  },
+  {
+    "id": "TC8",
+    "ac": "AC8",
+    "text": "Given no X-Ms-Graph-Token header (client_factory() returns None), When the tool is called, Then the result equals the connector's NO_TOKEN envelope, unchanged from every other tool's behavior.",
+    "type": "auto",
+    "tests": []
+  },
+  {
+    "id": "TC9",
+    "ac": "AC9",
+    "text": "Given a successful addPassword response from the fake client, When the tool's return value is inspected, Then secret_text appears exactly once in the JSON payload and no logging facility is called anywhere in the request path (there is none to call).",
+    "type": "auto",
+    "tests": []
+  },
+  {
+    "id": "TC10",
+    "ac": "AC10",
+    "text": "Given graph_service_principal_create_and_add_password is registered with a matching README row and docs/gdap-role-map.yaml entry, and the two hard-coded lockstep counts (EXPECTED_TOOLS-derived tool count and role_map count) are bumped 47->48, When tests/test_gdap_role_map.py and test_tools_list_snapshot run, Then both pass without weakening either test.",
+    "type": "auto",
+    "tests": [
+      "tests/test_gdap_role_map.py::test_gdap_role_map_matches_registered_tools_and_readme",
+      "tests/test_tools.py::test_tools_list_snapshot"
+    ]
+  }
+]
