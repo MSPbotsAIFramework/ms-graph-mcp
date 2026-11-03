@@ -2086,6 +2086,37 @@ async def test_remove_manager_returns_no_manager_without_calling_delete():
 
 
 @pytest.mark.asyncio
+async def test_remove_manager_no_manager_shape_is_not_group_removal_shape():
+    """AC2/TC4 (PRD-20393 round 4, regression-confirmation guard): the
+    2026-11-02 retest reported graph_remove_manager returning a bare
+    {"status": "removed"} for a no-manager user. That shape belongs to
+    graph_remove_group_member (groups.py), which returns {"group_id",
+    "status"} per group -- graph_remove_manager has no code path that
+    produces either key (see expected below). This test names that fact
+    explicitly so a future retest has a concrete, citable answer instead of
+    a fresh code read."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import users
+
+    mcp = FastMCP(name="test")
+    client = _ManagerRemovalClient(get_error=GraphError(404, "no manager"))
+    users.register(mcp, lambda: client)
+
+    result = json.loads(
+        (await mcp.call_tool("graph_remove_manager", {"user_id": "u1"}))[0][0].text
+    )
+    assert result == {
+        "user_id": "u1",
+        "removed": False,
+        "previous_manager": None,
+        "reason": "no_manager",
+    }
+    assert "status" not in result
+    assert "group_id" not in result
+
+
+@pytest.mark.asyncio
 async def test_remove_manager_nonexistent_user_returns_not_found():
     """Fix 1 (PRD-20393 round 3, defect confirmed on INT): Graph 404s
     GET .../manager both when the user has no manager and when user_id
@@ -2216,6 +2247,32 @@ async def test_get_user_default_select_includes_onprem_and_audit_fields():
 
 
 @pytest.mark.asyncio
+async def test_get_user_default_select_includes_all_four_audit_fields_r4():
+    """AC3/TC5 (PRD-20393 round 4, regression-confirmation guard): the
+    2026-11-02 retest reported onPremisesImmutableId,
+    onPremisesSamAccountName, createdDateTime and lastPasswordChangeDateTime
+    missing from the default graph_get_user response. They have been in
+    _USER_PROFILE_SELECT since round 2 (see
+    test_get_user_default_select_includes_onprem_and_audit_fields above)
+    and are unchanged; this test names that fact under round 4's own
+    acceptance criterion so the next retest has a directly-citable answer
+    rather than a fresh code read."""
+    from graph_mcp.tools import users
+
+    mcp, client = _register(users)
+    await mcp.call_tool("graph_get_user", {"user_id": "u1"})
+
+    select = client.calls[0][1]["$select"]
+    for field in (
+        "onPremisesImmutableId",
+        "onPremisesSamAccountName",
+        "createdDateTime",
+        "lastPasswordChangeDateTime",
+    ):
+        assert field in select, f"{field} missing from default $select"
+
+
+@pytest.mark.asyncio
 async def test_get_user_custom_select_narrows_fields():
     """AC6/TC6 (unaffected by round 2): a select param without "manager"
     must produce a $select of exactly those fields plus id, and no
@@ -2247,6 +2304,59 @@ async def test_get_user_select_with_manager_adds_expand():
 
     assert client.calls[0][1]["$select"] == "id,proxyAddresses"
     assert client.calls[0][1]["$expand"] == "manager($select=id,displayName,userPrincipalName)"
+
+
+@pytest.mark.asyncio
+async def test_get_user_manager_requested_but_absent_returns_null():
+    """AC1/TC1 (PRD-20393 round 4, Issue A): the default call always
+    requests manager via $expand. When Graph's response has no manager key
+    (the user has no manager), the tool must inject manager: null instead
+    of returning a response that omits the key entirely -- the 2026-11-02
+    retest could not tell "no manager" from "manager not returned" from an
+    omitted key."""
+    from graph_mcp.tools import users
+
+    mcp, client = _register(users, get_result={"id": "u1", "displayName": "No Manager"})
+    result = json.loads(
+        (await mcp.call_tool("graph_get_user", {"user_id": "u1"}))[0][0].text
+    )
+    assert result["manager"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_user_select_with_manager_absent_returns_null():
+    """AC1/TC2 (PRD-20393 round 4, Issue A): same null-injection as TC1, but
+    through the select=[..., "manager"] path (round 2's Defect 4b route),
+    not just the default call."""
+    from graph_mcp.tools import users
+
+    mcp, client = _register(
+        users, get_result={"id": "u1", "proxyAddresses": ["a@contoso.com"]}
+    )
+    result = json.loads(
+        (
+            await mcp.call_tool(
+                "graph_get_user", {"user_id": "u1", "select": ["proxyAddresses", "manager"]}
+            )
+        )[0][0].text
+    )
+    assert result == {"id": "u1", "proxyAddresses": ["a@contoso.com"], "manager": None}
+
+
+@pytest.mark.asyncio
+async def test_get_user_manager_present_unaffected_by_null_injection():
+    """AC1/TC3 (PRD-20393 round 4, regression guard): when Graph's response
+    already has a populated manager object, the new null-injection must
+    never overwrite it -- round 4 only fills in a key that is MISSING, it
+    never looks at whether an existing value is truthy."""
+    from graph_mcp.tools import users
+
+    manager = {"id": "m1", "displayName": "Boss", "userPrincipalName": "boss@contoso.com"}
+    mcp, client = _register(users, get_result={"id": "u1", "manager": manager})
+    result = json.loads(
+        (await mcp.call_tool("graph_get_user", {"user_id": "u1"}))[0][0].text
+    )
+    assert result["manager"] == manager
 
 
 class _RaisingGetClient:
