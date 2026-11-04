@@ -30,6 +30,7 @@ EXPECTED_TOOLS = {
     "graph_assign_manager": {"user_id", "manager_id"},
     "graph_remove_manager": {"user_id"},
     "graph_list_auth_methods": {"user_id"},
+    "graph_delete_auth_method": {"user_id", "method_type", "method_id"},
     "graph_create_tap": {"user_id"},
     "graph_revoke_sessions": {"user_id"},
     "graph_assign_groups": {"user_id", "group_ids"},
@@ -78,6 +79,7 @@ _NON_READ_ONLY = {
     "graph_revoke_sessions",
     "graph_assign_groups",
     "graph_add_group_owner",
+    "graph_delete_auth_method",
     "graph_create_tap",
     "graph_remove_group_member",
     "graph_assign_license",
@@ -159,7 +161,12 @@ async def test_tools_list_snapshot():
     # assignments (graph_list_user_groups deliberately excludes them, see its
     # own /memberOf comment), so this is a distinct endpoint, not a mode flag
     # on an existing tool.
-    assert len(names) <= 45, "tool count should stay within SOP's <=20 guideline (+25 justified)"
+    # +1 for graph_delete_auth_method (PRD-21583): graph_list_auth_methods was
+    # read-only, so the delete half of the Rewst "Reset Microsoft MFA" runbook
+    # had no equivalent on the platform. method_type is a required Literal
+    # (not an optional mode flag) so the MCP schema rejects an out-of-enum
+    # value before any Graph call is attempted.
+    assert len(names) <= 46, "tool count should stay within SOP's <=20 guideline (+26 justified)"
 
     by_name = {t.name: t for t in tools}
     for name, expected_required in EXPECTED_TOOLS.items():
@@ -3132,6 +3139,188 @@ async def test_start_cloud_sync_filters_service_principals_server_side():
     )
     assert client.get_headers[1] == {"ConsistencyLevel": "eventual"}
     assert (next_link, {}) in client.get_calls
+
+
+# ---------------------------------------------------------------------------
+# PRD-21583: graph_delete_auth_method
+# ---------------------------------------------------------------------------
+
+
+class _RaisingDeleteClient:
+    """GraphClient stand-in whose DELETE always raises, to confirm a non-404
+    GraphError comes back as the structured envelope instead of being
+    swallowed (TC3) or propagating as an exception."""
+
+    def __init__(self, status_code: int = 500, message: str = "boom"):
+        self._status_code = status_code
+        self._message = message
+        self.calls: list[str] = []
+
+    async def delete(self, path: str):
+        self.calls.append(path)
+        raise GraphError(self._status_code, self._message)
+
+
+@pytest.mark.asyncio
+async def test_delete_auth_method_success_returns_deleted_true():
+    """TC1/AC1: a 204 from Graph (no exception) reports deleted=true with
+    the echoed params."""
+    from graph_mcp.tools import users
+
+    mcp, client = _register(users)
+    result = json.loads(
+        (
+            await mcp.call_tool(
+                "graph_delete_auth_method",
+                {"user_id": "u1", "method_type": "phoneMethods", "method_id": "m1"},
+            )
+        )[0][0].text
+    )
+
+    assert client.methods == ["DELETE"]
+    assert client.calls[0][0] == "/users/u1/authentication/phoneMethods/m1"
+    assert result == {
+        "user_id": "u1",
+        "method_type": "phoneMethods",
+        "method_id": "m1",
+        "deleted": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_delete_auth_method_404_is_idempotent_success():
+    """TC2/AC2: deleting an already-gone method_id still reports
+    deleted=true -- same idempotent-delete convention as
+    graph_remove_managed_device/graph_remove_manager."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import users
+
+    mcp = FastMCP(name="test")
+    client = _RaisingDeleteClient(404, "Resource not found")
+    users.register(mcp, lambda: client)
+
+    result = json.loads(
+        (
+            await mcp.call_tool(
+                "graph_delete_auth_method",
+                {
+                    "user_id": "u1",
+                    "method_type": "microsoftAuthenticatorMethods",
+                    "method_id": "stale-id",
+                },
+            )
+        )[0][0].text
+    )
+
+    assert client.calls == ["/users/u1/authentication/microsoftAuthenticatorMethods/stale-id"]
+    assert result == {
+        "user_id": "u1",
+        "method_type": "microsoftAuthenticatorMethods",
+        "method_id": "stale-id",
+        "deleted": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_delete_auth_method_non_404_error_is_not_swallowed():
+    """TC3/AC2: a non-404 GraphError (e.g. a transient 500) must come back
+    as the standard error envelope, not as deleted=true."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import users
+
+    mcp = FastMCP(name="test")
+    client = _RaisingDeleteClient(500, "boom")
+    users.register(mcp, lambda: client)
+
+    result = json.loads(
+        (
+            await mcp.call_tool(
+                "graph_delete_auth_method",
+                {"user_id": "u1", "method_type": "phoneMethods", "method_id": "m1"},
+            )
+        )[0][0].text
+    )
+
+    assert client.calls == ["/users/u1/authentication/phoneMethods/m1"]
+    assert result["error"]["code"] == "upstream_error"
+    assert "deleted" not in result
+
+
+@pytest.mark.asyncio
+async def test_delete_auth_method_rejects_invalid_method_type():
+    """TC4/AC3: an out-of-enum method_type is rejected by the MCP tool
+    schema before any Graph call is attempted -- method_type is a required
+    Literal, not a free-form string."""
+    from mcp.server.fastmcp import FastMCP
+    from mcp.server.fastmcp.exceptions import ToolError
+
+    from graph_mcp.tools import users
+
+    mcp = FastMCP(name="test")
+    client = _RaisingDeleteClient()
+    users.register(mcp, lambda: client)
+
+    with pytest.raises(ToolError, match="method_type"):
+        await mcp.call_tool(
+            "graph_delete_auth_method",
+            {"user_id": "u1", "method_type": "not_a_real_method_type", "method_id": "m1"},
+        )
+
+    assert client.calls == [], "schema validation must reject before any Graph call"
+
+
+@pytest.mark.asyncio
+async def test_delete_auth_method_403_returns_unauthorized_envelope():
+    """TC5/AC4: a tenant that has not re-consented for
+    UserAuthenticationMethod.ReadWrite.All gets a 403 from Graph, which must
+    surface as the standard unauthorized envelope -- the same pre-existing
+    rollout condition already documented for graph_create_tap, not a new
+    failure mode introduced by this tool."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import users
+
+    mcp = FastMCP(name="test")
+    client = _RaisingDeleteClient(403, "Insufficient privileges to complete the operation.")
+    users.register(mcp, lambda: client)
+
+    result = json.loads(
+        (
+            await mcp.call_tool(
+                "graph_delete_auth_method",
+                {"user_id": "u1", "method_type": "emailMethods", "method_id": "m1"},
+            )
+        )[0][0].text
+    )
+
+    assert result["error"]["code"] == "unauthorized"
+
+
+@pytest.mark.asyncio
+async def test_delete_auth_method_without_token_returns_no_token_envelope():
+    """TC7/AC6: a missing/invalid X-Ms-Graph-Token header (client_factory
+    returns None) must return the connector's standard not_configured
+    envelope, same as every other tool -- never reach the Graph client at
+    all."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import users
+
+    mcp = FastMCP(name="test")
+    users.register(mcp, lambda: None)
+
+    result = json.loads(
+        (
+            await mcp.call_tool(
+                "graph_delete_auth_method",
+                {"user_id": "u1", "method_type": "phoneMethods", "method_id": "m1"},
+            )
+        )[0][0].text
+    )
+
+    assert result["error"]["code"] == "not_configured"
 
 
 # ---------------------------------------------------------------------------

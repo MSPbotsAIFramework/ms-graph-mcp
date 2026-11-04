@@ -46,6 +46,11 @@ graph_list_auth_methods:
   roles:
   - Authentication Administrator
   note: 'Read-only: lists the user''s MFA methods.'
+graph_delete_auth_method:
+  roles:
+  - Authentication Administrator
+  - Privileged Authentication Administrator
+  note: Any of; deletes one of the user's registered MFA methods (MFA reset).
 graph_create_tap:
   roles:
   - Authentication Administrator
