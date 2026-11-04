@@ -4,28 +4,36 @@
     "ac": "AC1",
     "text": "Given a mocked Graph response with 2 Conditional Access policies, When graph_list_conditional_access_policies() is called with no arguments, Then the result has count: 2 and both policies carry id/displayName/state/createdDateTime/modifiedDateTime/conditions/grantControls/sessionControls",
     "type": "auto",
-    "tests": ["tests/test_tools.py::test_graph_list_conditional_access_policies_returns_all_fields"]
+    "tests": ["tests/test_tools.py::test_graph_list_conditional_access_policies_returns_all_fields"],
+    "result": "pass",
+    "evidence": "uv run pytest -q -k conditional_access -> 4 passed, 180 deselected (full gate: 184 passed, 0 failed)"
   },
   {
     "id": "TC-GRAPH-002",
     "ac": "AC2",
     "text": "Given a mocked Graph response with an empty value list, When the tool is called, Then the result is count: 0, policies: [] -- not an error",
     "type": "auto",
-    "tests": ["tests/test_tools.py::test_graph_list_conditional_access_policies_empty_tenant"]
+    "tests": ["tests/test_tools.py::test_graph_list_conditional_access_policies_empty_tenant"],
+    "result": "pass",
+    "evidence": "uv run pytest -q -k conditional_access -> 4 passed, 180 deselected (full gate: 184 passed, 0 failed)"
   },
   {
     "id": "TC-GRAPH-003",
     "ac": "AC3",
     "text": "Given a mocked Graph response with 3 policies of mixed state (enabled, disabled, enabledForReportingButNotEnforced), When the tool is called with state=\"enabled\", Then only the 1 matching policy is returned",
     "type": "auto",
-    "tests": ["tests/test_tools.py::test_graph_list_conditional_access_policies_state_filter"]
+    "tests": ["tests/test_tools.py::test_graph_list_conditional_access_policies_state_filter"],
+    "result": "pass",
+    "evidence": "uv run pytest -q -k conditional_access -> 4 passed, 180 deselected (full gate: 184 passed, 0 failed)"
   },
   {
     "id": "TC-GRAPH-004",
     "ac": "AC4",
     "text": "Given the mocked Graph call raises a GraphError with status 403, When the tool is called, Then the result is the structured unauthorized error envelope, not an unhandled exception",
     "type": "auto",
-    "tests": ["tests/test_tools.py::test_graph_list_conditional_access_policies_missing_scope_403"]
+    "tests": ["tests/test_tools.py::test_graph_list_conditional_access_policies_missing_scope_403"],
+    "result": "pass",
+    "evidence": "uv run pytest -q -k conditional_access -> 4 passed, 180 deselected; also verified live: curl against a running instance with a 401 (missing header) returns the structured envelope {\"error\":\"Missing credentials\",...} (same shape family), see docs/tickets/PRD-21579.md Self-test section for the smoke transcript"
   },
   {
     "id": "TC-GRAPH-005",
@@ -38,7 +46,8 @@
       "Confirm no parameter of graph_list_conditional_access_policies accepts a tenant id, token, or any other cross-tenant selector"
     ],
     "expect": "policies.py has no tenant-id parameter and no code path that builds a GraphClient from anything other than client_factory()",
-    "result": "untested"
+    "result": "pass",
+    "evidence": "src/graph_mcp/tools/policies.py:21-25 -- the only parameter is `state: Literal[...] | None`, no tenant/user/token parameter; line 32 `client = client_factory()` is the only place a GraphClient is obtained, matching every other tool in this repo (domains.py:20 is the pattern copied)."
   },
   {
     "id": "TC-GRAPH-006",
@@ -51,7 +60,7 @@
       "Record the exact error envelope returned"
     ],
     "expect": "A structured unauthorized error envelope (not a stack trace, not a generic 'tool not found'); exact wording recorded for comparison once the tenant re-consents",
-    "result": "untested",
-    "notes": "needs a real vendor account that has not yet granted Policy.Read.All -- cannot be scripted in this repo, does not block per references/mcp-track.md section 3"
+    "result": "blocked",
+    "notes": "needs a real vendor account that has not yet granted Policy.Read.All -- cannot be scripted in this repo, does not block per references/mcp-track.md section 3. TC-GRAPH-004 already covers the mocked-403 envelope shape with the exact code path this would exercise."
   }
 ]
