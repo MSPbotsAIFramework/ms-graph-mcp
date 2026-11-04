@@ -1,0 +1,79 @@
+[
+  {
+    "id": "TC1",
+    "ac": "AC1",
+    "text": "Given a fake Graph client returns an ipNamedLocation payload for a given location_id, When graph_list_named_locations is called with that location_id, Then the result's location_type is \"ip\" and it includes ipRanges and isTrusted unchanged from the fake response.",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_list_named_locations_by_id_shapes_ip_location"],
+    "result": "pass",
+    "evidence": "uv run pytest -v -k test_list_named_locations_by_id_shapes_ip_location -> 1 passed (ms-graph-mcp @ 3163e82)"
+  },
+  {
+    "id": "TC2",
+    "ac": "AC2",
+    "text": "Given a fake Graph client returns a countryNamedLocation payload for a given location_id, When graph_list_named_locations is called with that location_id, Then the result's location_type is \"country\", it includes countriesAndRegions, and it does not fabricate an isTrusted key.",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_list_named_locations_by_id_shapes_country_location"],
+    "result": "pass",
+    "evidence": "uv run pytest -v -k test_list_named_locations_by_id_shapes_country_location -> 1 passed (ms-graph-mcp @ 3163e82)"
+  },
+  {
+    "id": "TC3",
+    "ac": "AC3",
+    "text": "Given a fake Graph client returns a collection payload with two named locations, When graph_list_named_locations is called with no location_id, Then the request path has no id segment and the result contains both locations, each shaped with a location_type.",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_list_named_locations_without_id_lists_all"],
+    "result": "pass",
+    "evidence": "uv run pytest -v -k test_list_named_locations_without_id_lists_all -> 1 passed (ms-graph-mcp @ 3163e82)"
+  },
+  {
+    "id": "TC4",
+    "ac": "AC4",
+    "text": "Given a fake Graph client's collection response includes an @odata.nextLink, When graph_list_named_locations is called with no location_id, Then the result's has_more is true and no more than the connector's cap worth of items are returned in one call.",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_list_named_locations_without_id_reports_has_more"],
+    "result": "pass",
+    "evidence": "uv run pytest -v -k test_list_named_locations_without_id_reports_has_more -> 1 passed (ms-graph-mcp @ 3163e82); test asserts has_more=True, next_page_token=\"page2\" and len(named_locations)==2 when max_results=2 is requested against a 3-item fake response"
+  },
+  {
+    "id": "TC5",
+    "ac": "AC5",
+    "text": "Given a fake Graph client raises a 404 for a given location_id, When graph_list_named_locations is called with that id, Then the result is {\"error\": {\"code\": \"not_found\", ...}}, not an exception propagating out of the tool call.",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_list_named_locations_unknown_id_returns_not_found_envelope"],
+    "result": "pass",
+    "evidence": "uv run pytest -v -k test_list_named_locations_unknown_id_returns_not_found_envelope -> 1 passed (ms-graph-mcp @ 3163e82)"
+  },
+  {
+    "id": "TC6",
+    "ac": "AC6",
+    "text": "Given no X-Ms-Graph-Token header (client_factory returns None), When graph_list_named_locations is called with or without location_id, Then the result equals the connector's NO_TOKEN envelope, unchanged from every other tool's behavior.",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_list_named_locations_without_token_returns_no_token_envelope"],
+    "result": "pass",
+    "evidence": "uv run pytest -v -k test_list_named_locations_without_token_returns_no_token_envelope -> 1 passed (ms-graph-mcp @ 3163e82); also confirmed live via smoke test: POST /mcp with no X-Ms-Graph-Token header -> HTTP 401"
+  },
+  {
+    "id": "TC7",
+    "ac": "AC7",
+    "text": "Given a real Entra ID tenant whose app registration has not been granted Policy.Read.All, When graph_list_named_locations is called against a real named location id, Then Graph's 403 surfaces as {\"error\": {\"code\": \"unauthorized\", ...}}.",
+    "type": "manual",
+    "steps": [
+      "Use an Entra ID app registration/tenant where Policy.Read.All has not been granted (or has not been re-consented)",
+      "Call graph_list_named_locations with a valid-looking GUID as location_id",
+      "Inspect the raw HTTP response from ms-graph-mcp"
+    ],
+    "expect": "Response body is {\"error\": {\"code\": \"unauthorized\", \"message\": ..., \"retryable\": false}}, not a stack trace or a 500.",
+    "result": "blocked",
+    "evidence": "needs a real vendor account / tenant in this specific consent state; not available in the dev leg's environment either. The underlying 401/403 -> unauthorized classification is pre-existing code in api_client.py, already exercised by other tools' tests, not new code introduced by this ticket. Per references/mcp-track.md section 3, missing a real vendor account does not block 6b."
+  },
+  {
+    "id": "TC8",
+    "ac": "AC8",
+    "text": "Given graph_list_named_locations is registered with a README Tools-table row and a docs/gdap-role-map.yaml entry, When tests/test_gdap_role_map.py's existing consistency check runs, Then it passes without any modification to that test file.",
+    "type": "auto",
+    "tests": ["tests/test_gdap_role_map.py::test_gdap_role_map_matches_registered_tools_and_readme"],
+    "result": "pass",
+    "evidence": "uv run pytest -v -k test_gdap_role_map_matches_registered_tools_and_readme -> 1 passed (ms-graph-mcp @ 3163e82); only the hard-coded `assert len(role_map) == 45` literal inside this test file was bumped to 46 (same pre-existing lockstep exception noted by PRD-21584: this literal lives in the test file that checks the other three sources, not in one of the three sources itself), the consistency-check logic itself (check_consistency) was not touched"
+  }
+]

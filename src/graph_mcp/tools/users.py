@@ -429,14 +429,14 @@ def register(mcp: FastMCP, client_factory: Callable[[], GraphClient | None]) -> 
             ),
         ] = None,
     ) -> str:
-        """Read an Entra ID user's full profile: manager, licenses, proxy
+        """Read an Entra ID user's profile: manager, licenses, proxy
         addresses, identities, on-premises sync state.
 
-        Use before mirroring onto a new hire, to verify provisioning, or to
+        Use before mirroring onto a new hire, to verify provisioning, or
         decide whether a change belongs in on-premises AD instead
         (onPremisesSyncEnabled). licenseAssignmentStates[].assignedByGroup:
-        null means directly assigned; non-null means group-based. Pass
-        select to narrow the response to just the fields you need.
+        null=direct, non-null=group-based. select narrows the response;
+        manager is null (not omitted) when requested and absent.
         """
         client = client_factory()
         if client is None:
@@ -453,11 +453,19 @@ def register(mcp: FastMCP, client_factory: Callable[[], GraphClient | None]) -> 
             if manager_requested:
                 params["$expand"] = "manager($select=id,displayName,userPrincipalName)"
         else:
+            manager_requested = True
             params["$select"] = _USER_PROFILE_SELECT
             params["$expand"] = "manager($select=id,displayName,userPrincipalName)"
 
         try:
             result = await client.get(f"/users/{user_id}", params=params)
+            if manager_requested and "manager" not in result:
+                # PRD-20393 round 4 (Issue A): Graph's $expand omits the key
+                # entirely for a no-manager user instead of returning
+                # manager: null, which left callers unable to tell "no
+                # manager" from "manager not returned" -- inject the
+                # explicit null so the two cases are distinguishable.
+                result["manager"] = None
             return dump_json_capped(result)
         except GraphError as e:
             return e.to_envelope()

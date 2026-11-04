@@ -1,0 +1,84 @@
+[
+  {
+    "id": "TC1",
+    "ac": "AC1",
+    "text": "Given message_id=\"m1\" and user_id=\"u1\", When graph_delete_message is called, Then the server requests DELETE /users/u1/messages/m1 and the result is {\"user_id\": \"u1\", \"message_id\": \"m1\", \"deleted\": true}",
+    "type": "auto",
+    "tests": [
+      "ms-graph-mcp::tests/test_tools.py::test_delete_message_with_explicit_user_id"
+    ],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_delete_message_with_explicit_user_id -q @ dev/PRD-21578 4224583 -- 1 passed"
+  },
+  {
+    "id": "TC2",
+    "ac": "AC2",
+    "text": "Given message_id=\"m1\" and no user_id, When graph_delete_message is called, Then the server requests DELETE /me/messages/m1 and the result is {\"user_id\": \"me\", \"message_id\": \"m1\", \"deleted\": true}",
+    "type": "auto",
+    "tests": [
+      "ms-graph-mcp::tests/test_tools.py::test_delete_message_defaults_to_me"
+    ],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_delete_message_defaults_to_me -q @ dev/PRD-21578 4224583 -- 1 passed"
+  },
+  {
+    "id": "TC3",
+    "ac": "AC3",
+    "text": "Given a message_id for which the Graph client raises a 404 GraphError, When graph_delete_message is called, Then the result is still {\"deleted\": true}, not an error envelope",
+    "type": "auto",
+    "tests": [
+      "ms-graph-mcp::tests/test_tools.py::test_delete_message_is_idempotent_on_404"
+    ],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_delete_message_is_idempotent_on_404 -q @ dev/PRD-21578 4224583 -- 1 passed"
+  },
+  {
+    "id": "TC4",
+    "ac": "AC4",
+    "text": "Given a message_id for which the Graph client raises a 403 GraphError, When graph_delete_message is called, Then the result is the structured error envelope with the mapped error code, and no \"deleted\": true is returned",
+    "type": "auto",
+    "tests": [
+      "ms-graph-mcp::tests/test_tools.py::test_delete_message_surfaces_non_404_error"
+    ],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_delete_message_surfaces_non_404_error -q @ dev/PRD-21578 4224583 -- 1 passed; payload['error']['code'] == 'unauthorized' (403 maps to unauthorized per api_client._STATUS_TO_CODE), 'deleted' absent"
+  },
+  {
+    "id": "TC5",
+    "ac": "AC5",
+    "text": "Given the server's registered tool list, When graph_delete_message is inspected, Then its required parameters are exactly {message_id}, and its annotations are readOnlyHint=false, destructiveHint=true, idempotentHint=true",
+    "type": "auto",
+    "tests": [
+      "ms-graph-mcp::tests/test_tools.py::test_tools_list_snapshot (EXPECTED_TOOLS entry for graph_delete_message)",
+      "ms-graph-mcp::tests/test_tools.py::test_delete_message_annotations"
+    ],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_tools_list_snapshot tests/test_tools.py::test_delete_message_annotations -q @ dev/PRD-21578 4224583 -- 2 passed; live tools/list smoke (POST /mcp initialize+tools/list with placeholder X-Ms-Graph-Token) shows graph_delete_message among 46 tools"
+  },
+  {
+    "id": "TC6",
+    "ac": "AC6",
+    "text": "Given the repo's tests/test_gdap_role_map.py consistency test, When it runs after this change, Then it still passes -- graph_delete_message has matching entries in EXPECTED_TOOLS, the README Tools table, and docs/gdap-role-map.yaml",
+    "type": "auto",
+    "tests": [
+      "ms-graph-mcp::tests/test_gdap_role_map.py"
+    ],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_gdap_role_map.py -q @ dev/PRD-21578 4224583 -- 4 passed; role-map count bumped 45 -> 46 to match"
+  },
+  {
+    "id": "TC7",
+    "ac": "AC1",
+    "text": "Given no live Microsoft 365 tenant/test mailbox is available at design time, When graph_delete_message is self-tested, Then it is run once against a disposable test message on whatever tenant is available during the dev leg and the outcome (pass, or needs-real-tenant) is recorded in README Known Gaps -- per mcp-track.md 2.5, the absence of a test account is not a blocker",
+    "type": "manual",
+    "steps": [
+      "During the dev/self-test leg, on a tenant with a real Microsoft Graph connection, send a disposable test email to a test mailbox",
+      "Call graph_list_messages to find its message_id",
+      "Call graph_delete_message with that message_id",
+      "Confirm in Outlook/OWA that the message moved to Deleted Items"
+    ],
+    "expect": "graph_delete_message returns {\"deleted\": true}; the test message is visible in Deleted Items, not the original folder",
+    "result": "not_run",
+    "evidence": "No real Microsoft 365 tenant / test mailbox with a Microsoft Graph connection was available in this dev environment during the self-test leg. Not a blocker per mcp-track.md 2.5/3 (missing a real vendor account does not block this track). Recorded in README Known Gaps for real-tenant verification before go-live."
+  }
+]
