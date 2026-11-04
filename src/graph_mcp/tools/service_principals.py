@@ -81,18 +81,12 @@ def register(mcp: FastMCP, client_factory: Callable[[], GraphClient | None]) -> 
             ),
         ] = _DEFAULT_LIFETIME_MINUTES,
     ) -> str:
-        """Find or create the service principal for app_id, then add it a
-        short-lived password credential so it can authenticate as itself
-        (e.g. to trigger an MFA push as an app identity).
-
-        Reuses the existing service principal if one is already registered
-        for app_id (created=false); otherwise creates one (created=true).
-        Adding the password is not idempotent -- calling again adds another
-        credential rather than replacing the last one, and this tool never
-        removes credentials it created. secret_text is a one-time secret
-        only returned at creation; capture it now, it cannot be read back
-        later. Needs Application.ReadWrite.All; 403 until the tenant has
-        re-consented after that scope is granted (see README).
+        """Find or create the service principal for app_id (reused if it
+        exists), then add a short-lived password credential to it, e.g. to
+        trigger an MFA push as an app identity. Not idempotent: each call
+        adds another credential and never removes old ones. secret_text is
+        returned only once; capture it now. Needs Application.ReadWrite.All
+        (403 until the tenant re-consents).
         """
         client = client_factory()
         if client is None:
