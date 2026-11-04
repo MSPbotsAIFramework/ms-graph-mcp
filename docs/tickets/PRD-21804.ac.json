@@ -1,0 +1,54 @@
+[
+  {
+    "id": "TC1",
+    "ac": "AC1",
+    "text": "Given a group that is role-assignable in Graph (isAssignableToRole: true), When graph_list_groups lists it (e.g. \"test two\" on INT tenant 2qmxyw), Then that group's entry has isAssignableToRole: true and the Graph $select sent by the tool includes isAssignableToRole.",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_list_groups_returns_is_assignable_to_role"]
+  },
+  {
+    "id": "TC2",
+    "ac": "AC2",
+    "text": "Given ordinary groups where Graph returns isAssignableToRole as false and as null, When graph_list_groups lists them, Then each entry keeps that exact value unchanged (null is never converted to false).",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_list_groups_returns_is_assignable_to_role"]
+  },
+  {
+    "id": "TC3",
+    "ac": "AC3",
+    "text": "Given groups with onPremisesSyncEnabled true, false and null, When graph_list_groups lists them, Then sync_source is \"on-premises\" only when onPremisesSyncEnabled is truthy, else \"cloud\" -- the same rule graph_get_group uses -- and onPremisesSyncEnabled is present in the Graph $select.",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_list_groups_derives_sync_source_and_returns_on_premises_sync_enabled"]
+  },
+  {
+    "id": "TC4",
+    "ac": "AC4",
+    "text": "Given the existing pagination contract (has_more/next_page_token/$skiptoken) and filtering (display_name/exact), When this fix is applied, Then the existing tests for both keep passing unmodified.",
+    "type": "auto",
+    "tests": [
+      "tests/test_tools.py::test_list_groups_paginates_with_skiptoken"
+    ]
+  },
+  {
+    "id": "TC5",
+    "ac": "AC5",
+    "text": "Given the same group on both connectors, When graph_list_groups on this single-tenant connector (INT tenant 2qmxyw, group \"test two\") is compared to the GDAP connector's graph_list_groups for the same group, Then isAssignableToRole, onPremisesSyncEnabled and sync_source match.",
+    "type": "manual",
+    "steps": [
+      "On INT tenant 2qmxyw, call this connector's graph_list_groups with display_name=\"test two\", exact=true",
+      "Record isAssignableToRole, onPremisesSyncEnabled, sync_source from the result",
+      "Call the GDAP connector's graph_list_groups for the same tenant/group",
+      "Compare the three fields between both results"
+    ],
+    "expect": "isAssignableToRole, onPremisesSyncEnabled and sync_source are identical between the two connectors for the same group",
+    "result": "untested",
+    "evidence": "needs a live INT tenant (2qmxyw) and both connectors deployed; not executable from the design leg's sandbox (no network to live services). Dev leg should run this during self-test if INT access is available; otherwise report as not-run, not as passed."
+  },
+  {
+    "id": "TC6",
+    "ac": "AC6",
+    "text": "Given graph_list_groups's tool description (as read via tools/list), When compared to graph_get_group's description, Then it documents isAssignableToRole with matching \"null means an ordinary group\" wording.",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_list_groups_description_documents_is_assignable_to_role"]
+  }
+]
