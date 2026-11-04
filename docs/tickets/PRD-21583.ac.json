@@ -4,35 +4,45 @@
     "ac": "AC1",
     "text": "Given a user has a registered MFA method and its method_id is known, When graph_delete_auth_method is called with user_id/method_type/method_id, Then Graph returns 204 and the tool reports deleted: true with the echoed params.",
     "type": "auto",
-    "tests": ["tests/test_tools.py::test_delete_auth_method_success_returns_deleted_true"]
+    "tests": ["tests/test_tools.py::test_delete_auth_method_success_returns_deleted_true"],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_delete_auth_method_success_returns_deleted_true -v -> PASSED (2026-11-04, HEAD 9d9540e). Asserts client.calls[0] == ('/users/u1/authentication/phoneMethods/m1', {}) and result == {user_id: u1, method_type: phoneMethods, method_id: m1, deleted: true}."
   },
   {
     "id": "TC2",
     "ac": "AC2",
     "text": "Given the method_id no longer exists for that user, When graph_delete_auth_method is called, Then Graph returns 404 and the tool still reports deleted: true (idempotent, same convention as graph_remove_managed_device/graph_remove_manager).",
     "type": "auto",
-    "tests": ["tests/test_tools.py::test_delete_auth_method_404_is_idempotent_success"]
+    "tests": ["tests/test_tools.py::test_delete_auth_method_404_is_idempotent_success"],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_delete_auth_method_404_is_idempotent_success -v -> PASSED (2026-11-04, HEAD 9d9540e). _RaisingDeleteClient(404, ...) raised, tool still returned deleted: true."
   },
   {
     "id": "TC3",
     "ac": "AC2",
     "text": "Given Graph returns a non-404 error (e.g. 500), When graph_delete_auth_method is called, Then the tool returns the standard error envelope and does not report deleted: true.",
     "type": "auto",
-    "tests": ["tests/test_tools.py::test_delete_auth_method_non_404_error_is_not_swallowed"]
+    "tests": ["tests/test_tools.py::test_delete_auth_method_non_404_error_is_not_swallowed"],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_delete_auth_method_non_404_error_is_not_swallowed -v -> PASSED (2026-11-04, HEAD 9d9540e). result['error']['code'] == 'upstream_error', 'deleted' not in result."
   },
   {
     "id": "TC4",
     "ac": "AC3",
     "text": "Given method_type is not one of the six supported values, When graph_delete_auth_method is called, Then the MCP schema rejects the call before any Graph request is made.",
     "type": "auto",
-    "tests": ["tests/test_tools.py::test_delete_auth_method_rejects_invalid_method_type"]
+    "tests": ["tests/test_tools.py::test_delete_auth_method_rejects_invalid_method_type"],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_delete_auth_method_rejects_invalid_method_type -v -> PASSED (2026-11-04, HEAD 9d9540e). mcp.server.fastmcp.exceptions.ToolError raised with pydantic literal_error on method_type before client.delete was ever called (client.calls == [])."
   },
   {
     "id": "TC5",
     "ac": "AC4",
     "text": "Given the tenant has not re-consented for UserAuthenticationMethod.ReadWrite.All, When graph_delete_auth_method is called, Then Graph returns 403 and the tool returns the standard unauthorized envelope.",
     "type": "auto",
-    "tests": ["tests/test_tools.py::test_delete_auth_method_403_returns_unauthorized_envelope"]
+    "tests": ["tests/test_tools.py::test_delete_auth_method_403_returns_unauthorized_envelope"],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_delete_auth_method_403_returns_unauthorized_envelope -v -> PASSED (2026-11-04, HEAD 9d9540e). result['error']['code'] == 'unauthorized'."
   },
   {
     "id": "TC6",
@@ -46,13 +56,17 @@
       "Call graph_list_auth_methods(user_id) again"
     ],
     "expect": "Second graph_list_auth_methods call no longer lists the deleted method_id; the call only affected the targeted tenant/user, no cross-tenant data appears in any response",
-    "notes": "needs a real vendor account (two real tenants + a real registered MFA method); not a delivery blocker per the MCP track's no-test-account rule"
+    "notes": "needs a real vendor account (two real tenants + a real registered MFA method); not a delivery blocker per the MCP track's no-test-account rule",
+    "result": "blocked",
+    "evidence": "Not executed: no Microsoft Graph test tenant / test user with a registered MFA method is available in this environment. Per mcp-track.md S3 'completion standard', a missing vendor test account does not block delivery; recorded here as 'needs a real vendor account' for post-release verification (see Handoff)."
   },
   {
     "id": "TC7",
     "ac": "AC6",
     "text": "Given a missing or invalid X-Ms-Graph-Token header, When graph_delete_auth_method is called, Then it returns the connector's standard not_configured/401 envelope, same as every other tool.",
     "type": "auto",
-    "tests": ["tests/test_tools.py::test_delete_auth_method_without_token_returns_no_token_envelope"]
+    "tests": ["tests/test_tools.py::test_delete_auth_method_without_token_returns_no_token_envelope"],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_delete_auth_method_without_token_returns_no_token_envelope -v -> PASSED (2026-11-04, HEAD 9d9540e). result['error']['code'] == 'not_configured'. HTTP-layer 401 for a missing header confirmed separately by scratch/PRD-21583/smoke_http.py (POST /mcp tools/list without X-Ms-Graph-Token -> 401)."
   }
 ]
