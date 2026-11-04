@@ -194,18 +194,31 @@ async def test_tools_list_snapshot():
     assert len(names) <= 49, "tool count should stay within SOP's <=20 guideline (+29 justified)"
 
     by_name = {t.name: t for t in tools}
+    # Collect every violation instead of asserting per-tool inside the loop
+    # (PRD-21618): a bare `assert` here stops at the FIRST failing tool in
+    # dict order, so a pre-existing failure on an earlier entry silently
+    # hides a new failure on a later one -- exactly what masked this
+    # ticket's own description-length regression through two review rounds.
+    failures: list[str] = []
     for name, expected_required in EXPECTED_TOOLS.items():
         tool = by_name[name]
         required = set(tool.inputSchema.get("required", []))
-        assert required == expected_required, f"{name}: required={required}"
-        assert tool.annotations is not None
-        if name not in _NON_READ_ONLY:
-            assert tool.annotations.readOnlyHint is True, f"{name}: expected readOnlyHint=True"
-        assert len(tool.description or "") <= 500, f"{name}: description too long"
-        first_line = (tool.description or "").strip().splitlines()[0]
-        assert len(first_line) <= 100, f"{name}: first line too long: {first_line!r}"
+        if required != expected_required:
+            failures.append(f"{name}: required={required}")
+        if tool.annotations is None:
+            failures.append(f"{name}: annotations is None")
+        elif name not in _NON_READ_ONLY and tool.annotations.readOnlyHint is not True:
+            failures.append(f"{name}: expected readOnlyHint=True")
+        description = tool.description or ""
+        if len(description) > 500:
+            failures.append(f"{name}: description too long ({len(description)} > 500)")
+        first_line = description.strip().splitlines()[0]
+        if len(first_line) > 100:
+            failures.append(f"{name}: first line too long: {first_line!r}")
         # No leaked implementation-detail lines like "API: GET /xxx".
-        assert "API:" not in (tool.description or ""), f"{name}: leaked API detail in description"
+        if "API:" in description:
+            failures.append(f"{name}: leaked API detail in description")
+    assert not failures, "\n".join(failures)
 
 
 @pytest.mark.asyncio

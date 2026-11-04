@@ -904,13 +904,11 @@ def register(mcp: FastMCP, client_factory: Callable[[], GraphClient | None]) -> 
     ) -> str:
         """Delete one email from a mailbox.
 
-        Moves the message to the mailbox's Deleted Items folder — the same
-        result as pressing Delete in Outlook — it does not purge it outright.
-        Idempotent: deleting an already-deleted or nonexistent message_id
-        returns success, not an error. Confirm the exact message_id (from
-        graph_list_messages/graph_get_message) before calling — there is no
-        undo from this tool once called, only the normal Outlook
-        Deleted-Items recovery window.
+        Moves it to Deleted Items — same as pressing Delete in Outlook, not
+        a purge. Idempotent: deleting an already-deleted or nonexistent
+        message_id still returns success. No undo from this tool; recovery
+        is only via the normal Outlook Deleted-Items window, so confirm the
+        exact message_id first.
         """
         client = client_factory()
         if client is None:
