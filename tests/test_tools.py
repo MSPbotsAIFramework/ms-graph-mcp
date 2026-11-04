@@ -1700,6 +1700,71 @@ async def test_list_groups_paginates_with_skiptoken():
 
 
 @pytest.mark.asyncio
+async def test_list_groups_returns_is_assignable_to_role():
+    """AC1/AC2/TC1/TC2: every graph_list_groups entry must report
+    isAssignableToRole exactly as Graph returns it -- true, false or null --
+    and the field must be requested via $select (PRD-21804)."""
+    from graph_mcp.tools import groups
+
+    mcp, client = _register(groups)
+    client._result = {
+        "value": [
+            {"id": "g1", "displayName": "test two", "isAssignableToRole": True},
+            {"id": "g2", "displayName": "ordinary false", "isAssignableToRole": False},
+            {"id": "g3", "displayName": "ordinary null", "isAssignableToRole": None},
+        ]
+    }
+    result = json.loads((await mcp.call_tool("graph_list_groups", {}))[0][0].text)
+
+    by_id = {g["id"]: g for g in result["groups"]}
+    assert by_id["g1"]["isAssignableToRole"] is True
+    assert by_id["g2"]["isAssignableToRole"] is False
+    assert by_id["g3"]["isAssignableToRole"] is None
+    assert by_id["g3"]["isAssignableToRole"] is not False
+    assert "isAssignableToRole" in client.calls[0][1]["$select"]
+
+
+@pytest.mark.asyncio
+async def test_list_groups_derives_sync_source_and_returns_on_premises_sync_enabled():
+    """AC3/TC3: graph_list_groups must derive sync_source from
+    onPremisesSyncEnabled with the same rule graph_get_group uses, and must
+    request onPremisesSyncEnabled via $select (PRD-21804)."""
+    from graph_mcp.tools import groups
+
+    mcp, client = _register(groups)
+    client._result = {
+        "value": [
+            {"id": "g1", "onPremisesSyncEnabled": True},
+            {"id": "g2", "onPremisesSyncEnabled": False},
+            {"id": "g3", "onPremisesSyncEnabled": None},
+        ]
+    }
+    result = json.loads((await mcp.call_tool("graph_list_groups", {}))[0][0].text)
+
+    by_id = {g["id"]: g for g in result["groups"]}
+    assert by_id["g1"]["sync_source"] == "on-premises"
+    assert by_id["g1"]["onPremisesSyncEnabled"] is True
+    assert by_id["g2"]["sync_source"] == "cloud"
+    assert by_id["g3"]["sync_source"] == "cloud"
+    assert by_id["g3"]["onPremisesSyncEnabled"] is None
+    assert "onPremisesSyncEnabled" in client.calls[0][1]["$select"]
+
+
+@pytest.mark.asyncio
+async def test_list_groups_description_documents_is_assignable_to_role():
+    """AC6/TC6: graph_list_groups's description must document
+    isAssignableToRole with the same "null means an ordinary group" wording
+    as graph_get_group (PRD-21804)."""
+    mcp = create_mcp_server(Settings())
+    tools = {t.name: t for t in await mcp.list_tools()}
+    description = " ".join((tools["graph_list_groups"].description or "").lower().split())
+
+    assert "isassignabletorole" in description
+    assert "null" in description
+    assert "ordinary group" in description
+
+
+@pytest.mark.asyncio
 async def test_list_users_paginates_with_skiptoken():
     """AC4/TC4: graph_list_users must follow the one-page-per-call contract,
     chaining next_page_token rather than walking pages internally."""
