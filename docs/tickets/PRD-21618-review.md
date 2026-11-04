@@ -1,6 +1,6 @@
 # PRD-21618 · Code review
 
-Status: frozen @ ae004c2
+Status: frozen @ 72e737f
 
 ## Round 1 · 2026-10-31 · reviewed dev/PRD-21618 @ 83590c9 (base 443fe48)
 
