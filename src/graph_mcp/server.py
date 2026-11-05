@@ -123,6 +123,7 @@ def create_mcp_server(settings: Settings) -> FastMCP:
         licenses,
         mail,
         offboarding,
+        policies,
         service_principals,
         sites,
         users,
@@ -141,5 +142,6 @@ def create_mcp_server(settings: Settings) -> FastMCP:
     gdap_roles.register(mcp, client_factory)
     conditional_access.register(mcp, client_factory)
     service_principals.register(mcp, client_factory)
+    policies.register(mcp, client_factory)
 
     return mcp
