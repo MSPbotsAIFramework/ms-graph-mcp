@@ -45,10 +45,12 @@ EXPECTED_TOOLS = {
     "graph_assign_license": {"user_id"},
     "graph_reprocess_license": {"user_id"},
     "graph_list_domains": set(),
+    "graph_list_applications": set(),
     "graph_send_mail": {"to_recipients", "subject", "body"},
     "graph_list_messages": set(),
     "graph_get_message": {"message_id"},
     "graph_read_mail_attachment": {"message_id", "attachment_id"},
+    "graph_delete_message": {"message_id"},
     "graph_search_sites": {"query"},
     "graph_list_drive_items": {"drive_id"},
     "graph_get_file": {"drive_id", "item_id"},
@@ -66,6 +68,8 @@ EXPECTED_TOOLS = {
     "graph_transfer_onedrive": {"source_user_id", "recipient_user_id"},
     "graph_start_cloud_sync": {"user_id"},
     "graph_list_gdap_roles": set(),
+    "graph_list_named_locations": set(),
+    "graph_service_principal_create_and_add_password": {"app_id"},
     "graph_get_security_defaults_policy": set(),
 }
 
@@ -87,11 +91,13 @@ _NON_READ_ONLY = {
     "graph_write_file_text",
     "graph_create_file_text",
     "graph_delete_file",
+    "graph_delete_message",
     "graph_remove_managed_device",
     "graph_create_calendar_event",
     "graph_cancel_calendar_event",
     "graph_transfer_onedrive",
     "graph_start_cloud_sync",
+    "graph_service_principal_create_and_add_password",
 }
 
 
@@ -160,13 +166,39 @@ async def test_tools_list_snapshot():
     # assignments (graph_list_user_groups deliberately excludes them, see its
     # own /memberOf comment), so this is a distinct endpoint, not a mode flag
     # on an existing tool.
+    # +1 for graph_list_named_locations (PRD-21580, Rewst gap register item
+    # 12): no existing tool reads identity/conditionalAccess/namedLocations,
+    # so resolving a CA policy's location id to its IP ranges/countries is a
+    # distinct endpoint; the by-id and no-id-list cases are collapsed into
+    # one optional-parameter tool rather than split (see graph_list_domains,
+    # which has no id parameter for the same "small, bounded resource" reason).
+    # +1 for graph_delete_message (PRD-21578): Ginko IT's malicious-email-removal
+    # Rewst flow needs to delete one already-identified message by id; the
+    # mail domain's three existing tools are read/send only, and this follows
+    # the same idempotent-delete pattern as graph_delete_file/
+    # graph_remove_managed_device rather than overloading graph_get_message
+    # with a destructive mode flag.
+    # +1 for graph_list_applications (PRD-21582, Rewst gap register item 14):
+    # replaces a Rewst flow that alerts on expiring Entra app-registration
+    # client secrets; no existing tool reads /applications, and computing
+    # days_until_expiry is additive data on a new resource family, not a
+    # mode flag on an existing tool.
+    # +1 for graph_service_principal_create_and_add_password (PRD-21618, Rewst
+    # gap register item 54): minting an app-identity credential for an
+    # MFA-push flow needs a service principal's /addPassword, a distinct
+    # endpoint none of the existing user/group/license/mail/site/device/
+    # domain/calendar/conditional-access/offboarding tools can reach; the
+    # find-or-create half is folded into this one tool rather than split
+    # (see the calendar/mail notes above on rejecting mode-flag splits),
+    # since a service principal with no password credential is never
+    # independently useful for this use case.
     # +1 for graph_get_security_defaults_policy (PRD-21581, Rewst-to-MSPbots
     # migration gap item 13): no existing tool reads the tenant's Security
-    # Defaults policy (all 45 prior tools and the GDAP role map were checked,
+    # Defaults policy (all 49 prior tools and the GDAP role map were checked,
     # see docs/tickets/PRD-21581.md Current state); this is a distinct,
     # zero-argument read of its own Graph resource (/policies/*), not a mode
     # flag on an existing tool.
-    assert len(names) <= 46, "tool count should stay within SOP's <=20 guideline (+26 justified)"
+    assert len(names) <= 50, "tool count should stay within SOP's <=20 guideline (+30 justified)"
 
     by_name = {t.name: t for t in tools}
     for name, expected_required in EXPECTED_TOOLS.items():
@@ -1146,6 +1178,100 @@ async def test_read_attachment_rejects_ole_file_that_is_not_xls():
     assert payload["error"]["code"] == "invalid_argument"
 
 
+class _DeleteMessageClient:
+    """GraphClient stand-in for graph_delete_message (PRD-21578): DELETE can
+    succeed, 404 (already gone -- must still report success), or raise any
+    other GraphError (must surface as the structured envelope, not success)."""
+
+    def __init__(self, delete_error: GraphError | None = None):
+        self._delete_error = delete_error
+        self.calls: list[str] = []
+
+    async def delete(self, path: str):
+        self.calls.append(path)
+        if self._delete_error is not None:
+            raise self._delete_error
+        return None
+
+
+def _delete_message_mcp(delete_error: GraphError | None = None):
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import mail
+
+    mcp = FastMCP(name="test")
+    client = _DeleteMessageClient(delete_error)
+    mail.register(mcp, lambda: client)
+    return mcp, client
+
+
+@pytest.mark.asyncio
+async def test_delete_message_with_explicit_user_id():
+    """TC1/AC1: an explicit user_id routes through /users/{id}, the app-only
+    / "someone else's mailbox" shape."""
+    mcp, client = _delete_message_mcp()
+
+    _, structured = await mcp.call_tool(
+        "graph_delete_message", {"message_id": "m1", "user_id": "u1"}
+    )
+    payload = json.loads(structured["result"])
+
+    assert client.calls == ["/users/u1/messages/m1"]
+    assert payload == {"user_id": "u1", "message_id": "m1", "deleted": True}
+
+
+@pytest.mark.asyncio
+async def test_delete_message_defaults_to_me():
+    """TC2/AC2: omitting user_id routes through /me, same convention as
+    graph_get_message."""
+    mcp, client = _delete_message_mcp()
+
+    _, structured = await mcp.call_tool("graph_delete_message", {"message_id": "m1"})
+    payload = json.loads(structured["result"])
+
+    assert client.calls == ["/me/messages/m1"]
+    assert payload == {"user_id": "me", "message_id": "m1", "deleted": True}
+
+
+@pytest.mark.asyncio
+async def test_delete_message_is_idempotent_on_404():
+    """TC3/AC3: deleting an already-gone message_id is success, not an
+    error -- matches graph_delete_file/graph_remove_managed_device."""
+    mcp, client = _delete_message_mcp(delete_error=GraphError(404, "not found"))
+
+    _, structured = await mcp.call_tool("graph_delete_message", {"message_id": "gone"})
+    payload = json.loads(structured["result"])
+
+    assert payload == {"user_id": "me", "message_id": "gone", "deleted": True}
+
+
+@pytest.mark.asyncio
+async def test_delete_message_surfaces_non_404_error():
+    """TC4/AC4: a non-404 Graph error (e.g. 403 when the token lacks
+    Mail.ReadWrite) must come back as the structured envelope, with no
+    "deleted": true anywhere in the response."""
+    mcp, client = _delete_message_mcp(delete_error=GraphError(403, "forbidden"))
+
+    _, structured = await mcp.call_tool("graph_delete_message", {"message_id": "m1"})
+    payload = json.loads(structured["result"])
+
+    assert "deleted" not in payload
+    assert payload["error"]["code"] == "unauthorized"
+
+
+@pytest.mark.asyncio
+async def test_delete_message_annotations():
+    """TC5/AC5: mirrors the three existing delete tools' annotation shape --
+    not read-only, destructive, idempotent."""
+    mcp = create_mcp_server(Settings())
+    tools = {t.name: t for t in await mcp.list_tools()}
+    annotations = tools["graph_delete_message"].annotations
+
+    assert annotations.readOnlyHint is False
+    assert annotations.destructiveHint is True
+    assert annotations.idempotentHint is True
+
+
 # --- PRD-20219: W2 onboarding gaps -------------------------------------------
 
 _PROFILE_ARGS = {
@@ -1967,6 +2093,37 @@ async def test_remove_manager_returns_no_manager_without_calling_delete():
 
 
 @pytest.mark.asyncio
+async def test_remove_manager_no_manager_shape_is_not_group_removal_shape():
+    """AC2/TC4 (PRD-20393 round 4, regression-confirmation guard): the
+    2026-11-02 retest reported graph_remove_manager returning a bare
+    {"status": "removed"} for a no-manager user. That shape belongs to
+    graph_remove_group_member (groups.py), which returns {"group_id",
+    "status"} per group -- graph_remove_manager has no code path that
+    produces either key (see expected below). This test names that fact
+    explicitly so a future retest has a concrete, citable answer instead of
+    a fresh code read."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import users
+
+    mcp = FastMCP(name="test")
+    client = _ManagerRemovalClient(get_error=GraphError(404, "no manager"))
+    users.register(mcp, lambda: client)
+
+    result = json.loads(
+        (await mcp.call_tool("graph_remove_manager", {"user_id": "u1"}))[0][0].text
+    )
+    assert result == {
+        "user_id": "u1",
+        "removed": False,
+        "previous_manager": None,
+        "reason": "no_manager",
+    }
+    assert "status" not in result
+    assert "group_id" not in result
+
+
+@pytest.mark.asyncio
 async def test_remove_manager_nonexistent_user_returns_not_found():
     """Fix 1 (PRD-20393 round 3, defect confirmed on INT): Graph 404s
     GET .../manager both when the user has no manager and when user_id
@@ -2097,6 +2254,32 @@ async def test_get_user_default_select_includes_onprem_and_audit_fields():
 
 
 @pytest.mark.asyncio
+async def test_get_user_default_select_includes_all_four_audit_fields_r4():
+    """AC3/TC5 (PRD-20393 round 4, regression-confirmation guard): the
+    2026-11-02 retest reported onPremisesImmutableId,
+    onPremisesSamAccountName, createdDateTime and lastPasswordChangeDateTime
+    missing from the default graph_get_user response. They have been in
+    _USER_PROFILE_SELECT since round 2 (see
+    test_get_user_default_select_includes_onprem_and_audit_fields above)
+    and are unchanged; this test names that fact under round 4's own
+    acceptance criterion so the next retest has a directly-citable answer
+    rather than a fresh code read."""
+    from graph_mcp.tools import users
+
+    mcp, client = _register(users)
+    await mcp.call_tool("graph_get_user", {"user_id": "u1"})
+
+    select = client.calls[0][1]["$select"]
+    for field in (
+        "onPremisesImmutableId",
+        "onPremisesSamAccountName",
+        "createdDateTime",
+        "lastPasswordChangeDateTime",
+    ):
+        assert field in select, f"{field} missing from default $select"
+
+
+@pytest.mark.asyncio
 async def test_get_user_custom_select_narrows_fields():
     """AC6/TC6 (unaffected by round 2): a select param without "manager"
     must produce a $select of exactly those fields plus id, and no
@@ -2128,6 +2311,59 @@ async def test_get_user_select_with_manager_adds_expand():
 
     assert client.calls[0][1]["$select"] == "id,proxyAddresses"
     assert client.calls[0][1]["$expand"] == "manager($select=id,displayName,userPrincipalName)"
+
+
+@pytest.mark.asyncio
+async def test_get_user_manager_requested_but_absent_returns_null():
+    """AC1/TC1 (PRD-20393 round 4, Issue A): the default call always
+    requests manager via $expand. When Graph's response has no manager key
+    (the user has no manager), the tool must inject manager: null instead
+    of returning a response that omits the key entirely -- the 2026-11-02
+    retest could not tell "no manager" from "manager not returned" from an
+    omitted key."""
+    from graph_mcp.tools import users
+
+    mcp, client = _register(users, get_result={"id": "u1", "displayName": "No Manager"})
+    result = json.loads(
+        (await mcp.call_tool("graph_get_user", {"user_id": "u1"}))[0][0].text
+    )
+    assert result["manager"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_user_select_with_manager_absent_returns_null():
+    """AC1/TC2 (PRD-20393 round 4, Issue A): same null-injection as TC1, but
+    through the select=[..., "manager"] path (round 2's Defect 4b route),
+    not just the default call."""
+    from graph_mcp.tools import users
+
+    mcp, client = _register(
+        users, get_result={"id": "u1", "proxyAddresses": ["a@contoso.com"]}
+    )
+    result = json.loads(
+        (
+            await mcp.call_tool(
+                "graph_get_user", {"user_id": "u1", "select": ["proxyAddresses", "manager"]}
+            )
+        )[0][0].text
+    )
+    assert result == {"id": "u1", "proxyAddresses": ["a@contoso.com"], "manager": None}
+
+
+@pytest.mark.asyncio
+async def test_get_user_manager_present_unaffected_by_null_injection():
+    """AC1/TC3 (PRD-20393 round 4, regression guard): when Graph's response
+    already has a populated manager object, the new null-injection must
+    never overwrite it -- round 4 only fills in a key that is MISSING, it
+    never looks at whether an existing value is truthy."""
+    from graph_mcp.tools import users
+
+    manager = {"id": "m1", "displayName": "Boss", "userPrincipalName": "boss@contoso.com"}
+    mcp, client = _register(users, get_result={"id": "u1", "manager": manager})
+    result = json.loads(
+        (await mcp.call_tool("graph_get_user", {"user_id": "u1"}))[0][0].text
+    )
+    assert result["manager"] == manager
 
 
 class _RaisingGetClient:
@@ -3600,6 +3836,105 @@ async def test_send_mail_logs_attachment_metadata(fetch, caplog):
     assert "source=url" in caplog.text
 
 
+# --- PRD-21676: isAssignableToRole on graph_get_group / graph_list_user_groups ---
+
+
+@pytest.mark.asyncio
+async def test_get_group_returns_is_assignable_to_role_true_for_role_assignable_group():
+    """AC1/TC1: a role-assignable group's graph_get_group response must
+    include isAssignableToRole: true, and the field must be requested via
+    $select."""
+    from graph_mcp.tools import groups
+
+    mcp, client = _register(groups)
+    client._result = {"id": "g1", "mailEnabled": False, "isAssignableToRole": True}
+    result = json.loads(
+        (await mcp.call_tool("graph_get_group", {"group_id": "g1"}))[0][0].text
+    )
+
+    assert result["isAssignableToRole"] is True
+    assert "isAssignableToRole" in client.calls[0][1]["$select"]
+
+
+@pytest.mark.asyncio
+async def test_get_group_passes_through_null_is_assignable_to_role_for_ordinary_group():
+    """AC2/TC2: Graph returns null (not false) for a group that was never
+    provisioned as role-assignable; the tool must pass that raw value
+    through unchanged rather than coercing it to false."""
+    from graph_mcp.tools import groups
+
+    mcp, client = _register(groups)
+    client._result = {"id": "g2", "mailEnabled": False, "isAssignableToRole": None}
+    result = json.loads(
+        (await mcp.call_tool("graph_get_group", {"group_id": "g2"}))[0][0].text
+    )
+
+    assert result["isAssignableToRole"] is None
+    assert result["isAssignableToRole"] is not True
+
+
+@pytest.mark.asyncio
+async def test_get_group_keeps_existing_classification_fields_unchanged():
+    """AC4/TC5: adding isAssignableToRole must not disturb the other
+    classification fields graph_get_group already returns (mailEnabled,
+    securityEnabled, groupTypes, onPremisesSyncEnabled, sync_source)."""
+    from graph_mcp.tools import groups
+
+    mcp, client = _register(groups)
+    client._result = {
+        "id": "g1",
+        "groupTypes": ["Unified"],
+        "securityEnabled": True,
+        "mailEnabled": True,
+        "onPremisesSyncEnabled": True,
+        "isAssignableToRole": True,
+    }
+    result = json.loads(
+        (await mcp.call_tool("graph_get_group", {"group_id": "g1"}))[0][0].text
+    )
+
+    assert result["mailEnabled"] is True
+    assert result["securityEnabled"] is True
+    assert result["groupTypes"] == ["Unified"]
+    assert result["onPremisesSyncEnabled"] is True
+    assert result["sync_source"] == "on-premises"
+    assert result["isAssignableToRole"] is True
+
+
+@pytest.mark.asyncio
+async def test_list_user_groups_includes_is_assignable_to_role_per_group():
+    """AC5/TC7: every entry graph_list_user_groups returns must carry the
+    correct isAssignableToRole for that specific group, and the field must
+    be requested via $select."""
+    from graph_mcp.tools import groups
+
+    mcp, client = _register(groups)
+    client._result = {
+        "value": [
+            {
+                "id": "g1",
+                "groupTypes": [],
+                "mailEnabled": False,
+                "isAssignableToRole": True,
+            },
+            {
+                "id": "g2",
+                "groupTypes": [],
+                "mailEnabled": False,
+                "isAssignableToRole": None,
+            },
+        ]
+    }
+    result = json.loads(
+        (await mcp.call_tool("graph_list_user_groups", {"user_id": "u1"}))[0][0].text
+    )
+
+    by_id = {g["id"]: g for g in result["groups"]}
+    assert by_id["g1"]["isAssignableToRole"] is True
+    assert by_id["g2"]["isAssignableToRole"] is None
+    assert "isAssignableToRole" in client.calls[0][1]["$select"]
+
+
 # --- PRD-21391: graph_list_user_roles ---------------------------------------
 
 
@@ -3722,6 +4057,576 @@ async def test_graph_list_user_roles_unknown_user_returns_404_envelope():
 
     assert result["error"]["code"] == "not_found"
     assert result["error"]["retryable"] is False
+
+
+def test_applications_days_until_expiry_arithmetic():
+    """Pure-function exactness check for days_until_expiry (PRD-21582 AC1/
+    AC6): both `now` and `end_date_time` are fixed inputs here, decoupled
+    from wall-clock timing, so the day-count math itself is verified exactly
+    rather than only its sign."""
+    import datetime as dt
+
+    from graph_mcp.tools.applications import _days_until_expiry
+
+    now = dt.datetime(2026, 11, 1, tzinfo=dt.UTC)
+    assert _days_until_expiry("2026-11-17T00:00:00Z", now) == 16
+    assert _days_until_expiry("2026-10-15T00:00:00Z", now) == -17
+    assert _days_until_expiry(None, now) is None
+
+
+@pytest.mark.asyncio
+async def test_graph_list_applications_returns_secret_with_days_until_expiry():
+    """TC1/AC1: a known app registration with a non-expired client secret
+    must come back with key_id/display_name/start_date_time/end_date_time/
+    hint, and a positive days_until_expiry. The exact day-count arithmetic
+    is covered by test_applications_days_until_expiry_arithmetic above; this
+    test only needs the sign, since it goes through the tool's real
+    datetime.now() rather than an injected clock."""
+    import datetime as dt
+
+    from graph_mcp.tools import applications
+
+    future = (dt.datetime.now(dt.UTC) + dt.timedelta(days=30)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    mcp, client = _register(applications)
+    client._result = {
+        "value": [
+            {
+                "appId": "app-1",
+                "displayName": "Ginko-RMM-Sync",
+                "passwordCredentials": [
+                    {
+                        "keyId": "key-1",
+                        "displayName": "prod-secret",
+                        "startDateTime": "2026-01-15T00:00:00Z",
+                        "endDateTime": future,
+                        "hint": "ab12",
+                    }
+                ],
+            }
+        ]
+    }
+    result = json.loads((await mcp.call_tool("graph_list_applications", {}))[0][0].text)
+
+    assert client.calls[0][0] == "/applications"
+    assert client.calls[0][1]["$select"] == "appId,displayName,passwordCredentials"
+    app = result["applications"][0]
+    assert app["app_id"] == "app-1"
+    assert app["display_name"] == "Ginko-RMM-Sync"
+    secret = app["secrets"][0]
+    assert secret["key_id"] == "key-1"
+    assert secret["display_name"] == "prod-secret"
+    assert secret["start_date_time"] == "2026-01-15T00:00:00Z"
+    assert secret["end_date_time"] == future
+    assert secret["hint"] == "ab12"
+    assert secret["days_until_expiry"] > 0
+
+
+@pytest.mark.asyncio
+async def test_graph_list_applications_includes_app_with_no_secrets():
+    """TC2/AC2: an app registration with no passwordCredentials still
+    appears in the result with secrets: [] -- not dropped, not an error."""
+    from graph_mcp.tools import applications
+
+    mcp, client = _register(applications)
+    client._result = {
+        "value": [
+            {"appId": "app-cert-only", "displayName": "Cert-only-app", "passwordCredentials": []},
+            {"appId": "app-no-key", "displayName": "No-key-field-app"},
+        ]
+    }
+    result = json.loads((await mcp.call_tool("graph_list_applications", {}))[0][0].text)
+
+    assert result["count"] == 2
+    assert result["applications"][0]["secrets"] == []
+    assert result["applications"][1]["secrets"] == []
+
+
+@pytest.mark.asyncio
+async def test_graph_list_applications_paginates_one_page_per_call():
+    """TC3/AC3: more applications than max_results returns has_more=true and
+    a next_page_token; passing that token back in fetches the remainder with
+    no overlap or gap -- mirrors graph_list_users's one-page-per-call
+    contract (test_list_users_stops_paginating_at_max_results above)."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import applications
+
+    mcp = FastMCP(name="test")
+    client = _QueuedClient(
+        [
+            {
+                "value": [{"appId": f"app-{i}", "displayName": f"App {i}"} for i in range(3)],
+                "@odata.nextLink": "https://graph.microsoft.com/v1.0/applications?$skiptoken=page2",
+            },
+            {"value": [{"appId": "app-3", "displayName": "App 3"}]},
+        ]
+    )
+    applications.register(mcp, lambda: client)
+
+    _, first = await mcp.call_tool("graph_list_applications", {"max_results": 3})
+    page1 = json.loads(first["result"])
+    assert page1["count"] == 3
+    assert page1["has_more"] is True
+    assert page1["next_page_token"] == "page2"
+    assert len(client.calls) == 1
+
+    _, second = await mcp.call_tool(
+        "graph_list_applications", {"max_results": 3, "page_token": page1["next_page_token"]}
+    )
+    page2 = json.loads(second["result"])
+    assert page2["count"] == 1
+    assert page2["has_more"] is False
+    assert page2["next_page_token"] is None
+    assert client.calls[1][1]["$skiptoken"] == "page2"
+
+    page1_ids = {a["app_id"] for a in page1["applications"]}
+    page2_ids = {a["app_id"] for a in page2["applications"]}
+    assert page1_ids | page2_ids == {"app-0", "app-1", "app-2", "app-3"}
+    assert page1_ids.isdisjoint(page2_ids)
+
+
+@pytest.mark.asyncio
+async def test_graph_list_applications_issues_get_only():
+    """TC4/AC4: across a result carrying application + secret data, the
+    fake Graph server must record only a GET for this tool -- it has no
+    write path at all."""
+    from graph_mcp.tools import applications
+
+    mcp, client = _register(applications)
+    client._result = {
+        "value": [
+            {
+                "appId": "app-1",
+                "displayName": "Ginko-RMM-Sync",
+                "passwordCredentials": [{"keyId": "key-1", "endDateTime": "2026-11-15T00:00:00Z"}],
+            }
+        ]
+    }
+    await mcp.call_tool("graph_list_applications", {})
+
+    assert client.methods == ["GET"]
+
+
+@pytest.mark.asyncio
+async def test_graph_list_applications_empty_tenant():
+    """TC5/AC5: a tenant with zero application registrations returns
+    {count: 0, applications: [], has_more: false, next_page_token: null},
+    not an error."""
+    from graph_mcp.tools import applications
+
+    mcp, client = _register(applications)
+    client._result = {"value": []}
+    result = json.loads((await mcp.call_tool("graph_list_applications", {}))[0][0].text)
+
+    assert result == {
+        "count": 0,
+        "applications": [],
+        "has_more": False,
+        "next_page_token": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_graph_list_applications_negative_days_until_expiry_for_expired_secret():
+    """TC6/AC6: a client secret whose end_date_time is already in the past
+    comes back with a negative days_until_expiry, distinguishing "already
+    expired" from "expiring soon" without the caller parsing dates itself."""
+    import datetime as dt
+
+    from graph_mcp.tools import applications
+
+    past = (dt.datetime.now(dt.UTC) - dt.timedelta(days=10)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    mcp, client = _register(applications)
+    client._result = {
+        "value": [
+            {
+                "appId": "app-1",
+                "displayName": "Stale-app",
+                "passwordCredentials": [
+                    {
+                        "keyId": "key-1",
+                        "displayName": "old-secret",
+                        "startDateTime": "2025-01-01T00:00:00Z",
+                        "endDateTime": past,
+                        "hint": "cd34",
+                    }
+                ],
+            }
+        ]
+    }
+    result = json.loads((await mcp.call_tool("graph_list_applications", {}))[0][0].text)
+
+    assert result["applications"][0]["secrets"][0]["days_until_expiry"] < 0
+
+
+# --- PRD-21580: graph_list_named_locations -----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_named_locations_by_id_shapes_ip_location():
+    """TC1/AC1: an ipNamedLocation response must come back with a derived
+    location_type="ip" field, keeping ipRanges/isTrusted unchanged."""
+    from graph_mcp.tools import conditional_access
+
+    mcp, client = _register(conditional_access)
+    client._result = {
+        "id": "loc-1",
+        "displayName": "Corporate network",
+        "@odata.type": "#microsoft.graph.ipNamedLocation",
+        "isTrusted": True,
+        "ipRanges": [{"@odata.type": "#microsoft.graph.iPv4CidrRange", "cidrAddress": "203.0.113.0/24"}],
+    }
+    result = json.loads(
+        (await mcp.call_tool("graph_list_named_locations", {"location_id": "loc-1"}))[0][0].text
+    )
+
+    assert client.calls[0][0] == "/identity/conditionalAccess/namedLocations/loc-1"
+    assert result["location_type"] == "ip"
+    assert result["isTrusted"] is True
+    assert result["ipRanges"] == [
+        {"@odata.type": "#microsoft.graph.iPv4CidrRange", "cidrAddress": "203.0.113.0/24"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_list_named_locations_by_id_shapes_country_location():
+    """TC2/AC2: a countryNamedLocation response must come back with
+    location_type="country", keep countriesAndRegions, and must not
+    fabricate an isTrusted key that only applies to IP locations."""
+    from graph_mcp.tools import conditional_access
+
+    mcp, client = _register(conditional_access)
+    client._result = {
+        "id": "loc-2",
+        "displayName": "Blocked countries",
+        "@odata.type": "#microsoft.graph.countryNamedLocation",
+        "countriesAndRegions": ["CU", "IR", "KP"],
+        "includeUnknownCountriesAndRegions": False,
+    }
+    result = json.loads(
+        (await mcp.call_tool("graph_list_named_locations", {"location_id": "loc-2"}))[0][0].text
+    )
+
+    assert result["location_type"] == "country"
+    assert result["countriesAndRegions"] == ["CU", "IR", "KP"]
+    assert "isTrusted" not in result
+
+
+@pytest.mark.asyncio
+async def test_list_named_locations_without_id_lists_all():
+    """TC3/AC3: with no location_id, the request must hit the collection
+    endpoint (no id segment) and the result must contain every location
+    returned, each shaped with a location_type."""
+    from graph_mcp.tools import conditional_access
+
+    mcp, client = _register(conditional_access)
+    client._result = {
+        "value": [
+            {
+                "id": "loc-1",
+                "displayName": "Corporate network",
+                "@odata.type": "#microsoft.graph.ipNamedLocation",
+                "isTrusted": True,
+                "ipRanges": [],
+            },
+            {
+                "id": "loc-2",
+                "displayName": "Blocked countries",
+                "@odata.type": "#microsoft.graph.countryNamedLocation",
+                "countriesAndRegions": ["CU"],
+            },
+        ]
+    }
+    result = json.loads((await mcp.call_tool("graph_list_named_locations", {}))[0][0].text)
+
+    assert client.calls[0][0] == "/identity/conditionalAccess/namedLocations"
+    assert result["count"] == 2
+    types = {loc["id"]: loc["location_type"] for loc in result["named_locations"]}
+    assert types == {"loc-1": "ip", "loc-2": "country"}
+    assert result["has_more"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_named_locations_without_id_reports_has_more():
+    """TC4/AC4: a collection response carrying @odata.nextLink must come
+    back with has_more=true and a next_page_token (the $skiptoken, not the
+    full URL — same contract as graph_list_group_members), and must not
+    return more than the connector's cap worth of items in one call."""
+    from graph_mcp.tools import conditional_access
+
+    mcp, client = _register(conditional_access)
+    client._result = {
+        "value": [{"id": f"loc-{i}", "@odata.type": "#microsoft.graph.ipNamedLocation"} for i in range(3)],
+        "@odata.nextLink": "https://graph.microsoft.com/v1.0/identity/conditionalAccess/namedLocations?$skiptoken=page2",
+    }
+    result = json.loads(
+        (await mcp.call_tool("graph_list_named_locations", {"max_results": 2}))[0][0].text
+    )
+
+    assert result["has_more"] is True
+    assert result["next_page_token"] == "page2"
+    assert len(result["named_locations"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_list_named_locations_unknown_id_returns_not_found_envelope():
+    """TC5/AC5: an unknown/deleted location_id must come back as the
+    structured not_found envelope, not an exception propagating out of the
+    tool call."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import conditional_access
+
+    class _NotFoundClient:
+        async def get(self, path: str, params=None, extra_headers=None):
+            raise GraphError(404, "Resource 'bad-loc' does not exist.")
+
+    mcp = FastMCP(name="test")
+    conditional_access.register(mcp, lambda: _NotFoundClient())
+
+    result = json.loads(
+        (await mcp.call_tool("graph_list_named_locations", {"location_id": "bad-loc"}))[0][0].text
+    )
+
+    assert result["error"]["code"] == "not_found"
+    assert result["error"]["retryable"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_named_locations_without_token_returns_no_token_envelope():
+    """TC6/AC6: missing X-Ms-Graph-Token (client_factory() -> None) must
+    return the connector's standard NO_TOKEN envelope, with or without
+    location_id -- identical to every other tool's behavior."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import conditional_access
+    from graph_mcp.tools._common import NO_TOKEN
+
+    mcp = FastMCP(name="test")
+    conditional_access.register(mcp, lambda: None)
+
+    result_by_id = (await mcp.call_tool("graph_list_named_locations", {"location_id": "loc-1"}))[0][0].text
+    result_list = (await mcp.call_tool("graph_list_named_locations", {}))[0][0].text
+
+    assert result_by_id == NO_TOKEN
+    assert result_list == NO_TOKEN
+
+
+# --- PRD-21618: graph_service_principal_create_and_add_password ----------
+
+
+def _sp_mcp(client):
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import service_principals
+
+    mcp = FastMCP(name="test")
+    service_principals.register(mcp, lambda: client)
+    return mcp
+
+
+async def _call_sp(client, **args):
+    mcp = _sp_mcp(client)
+    result = await mcp.call_tool("graph_service_principal_create_and_add_password", args)
+    return json.loads(result[0][0].text)
+
+
+@pytest.mark.asyncio
+async def test_sp_create_and_add_password_creates_when_no_match():
+    """TC1/AC1: zero existing service principals for app_id -> POST
+    /servicePrincipals creates one, addPassword mints a credential on the
+    new id, and the result reports created=true with the secret/key/window."""
+    client = _RoutedClient(
+        get_responses={"/servicePrincipals": {"value": []}},
+        post_responses={
+            "/servicePrincipals": {"id": "sp-new"},
+            "/servicePrincipals/sp-new/addPassword": {
+                "secretText": "s3cr3t",
+                "keyId": "key-1",
+                "displayName": "MSPbots MCP - Temporary Password",
+                "startDateTime": "2026-10-31T12:00:00Z",
+                "endDateTime": "2026-10-31T12:10:00Z",
+            },
+        },
+    )
+    payload = await _call_sp(client, app_id="app-1")
+
+    assert client.post_calls[0] == ("/servicePrincipals", {"appId": "app-1"})
+    assert client.post_calls[1][0] == "/servicePrincipals/sp-new/addPassword"
+    assert payload["created"] is True
+    assert payload["service_principal_id"] == "sp-new"
+    assert payload["app_id"] == "app-1"
+    assert payload["secret_text"] == "s3cr3t"
+    assert payload["key_id"] == "key-1"
+    assert payload["start_date_time"] == "2026-10-31T12:00:00Z"
+    assert payload["end_date_time"] == "2026-10-31T12:10:00Z"
+
+
+@pytest.mark.asyncio
+async def test_sp_create_and_add_password_reuses_existing_match():
+    """TC2/AC2: exactly one existing match -> POST /servicePrincipals is
+    NOT called, addPassword is called on the existing id, created=false."""
+    client = _RoutedClient(
+        get_responses={
+            "/servicePrincipals": {"value": [{"id": "sp-existing", "appId": "app-1"}]}
+        },
+        post_responses={
+            "/servicePrincipals/sp-existing/addPassword": {
+                "secretText": "s3cr3t2",
+                "keyId": "key-2",
+                "displayName": "MSPbots MCP - Temporary Password",
+                "startDateTime": "2026-10-31T12:00:00Z",
+                "endDateTime": "2026-10-31T12:10:00Z",
+            },
+        },
+    )
+    payload = await _call_sp(client, app_id="app-1")
+
+    assert "/servicePrincipals" not in [c[0] for c in client.post_calls]
+    assert client.post_calls == [
+        ("/servicePrincipals/sp-existing/addPassword", client.post_calls[0][1])
+    ]
+    assert payload["created"] is False
+    assert payload["service_principal_id"] == "sp-existing"
+
+
+@pytest.mark.asyncio
+async def test_sp_create_and_add_password_default_lifetime_is_ten_minutes():
+    """TC3/AC3: no start_date_time/lifetime_minutes given -> the addPassword
+    body's endDateTime is exactly 10 minutes after "now", and startDateTime
+    is omitted from the body entirely (letting Graph apply its own "now")."""
+    from datetime import UTC, datetime, timedelta
+
+    client = _RoutedClient(
+        get_responses={"/servicePrincipals": {"value": []}},
+        post_responses={
+            "/servicePrincipals": {"id": "sp-new"},
+            "/servicePrincipals/sp-new/addPassword": {"secretText": "x", "keyId": "k"},
+        },
+    )
+    before = datetime.now(UTC)
+    await _call_sp(client, app_id="app-1")
+    after = datetime.now(UTC)
+
+    body = client.post_calls[1][1]["passwordCredential"]
+    assert "startDateTime" not in body
+    end = datetime.strptime(body["endDateTime"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    assert before + timedelta(minutes=10) - timedelta(seconds=2) <= end
+    assert end <= after + timedelta(minutes=10) + timedelta(seconds=2)
+
+
+@pytest.mark.asyncio
+async def test_sp_create_and_add_password_custom_lifetime_and_start():
+    """TC4/AC4: lifetime_minutes=30 with an explicit start_date_time ->
+    endDateTime is exactly start_date_time + 30 minutes, and startDateTime
+    is echoed into the request body as given."""
+    client = _RoutedClient(
+        get_responses={"/servicePrincipals": {"value": []}},
+        post_responses={
+            "/servicePrincipals": {"id": "sp-new"},
+            "/servicePrincipals/sp-new/addPassword": {"secretText": "x", "keyId": "k"},
+        },
+    )
+    await _call_sp(
+        client, app_id="app-1", start_date_time="2026-11-01T00:00:00Z", lifetime_minutes=30
+    )
+
+    body = client.post_calls[1][1]["passwordCredential"]
+    assert body["startDateTime"] == "2026-11-01T00:00:00Z"
+    assert body["endDateTime"] == "2026-11-01T00:30:00Z"
+
+
+@pytest.mark.asyncio
+async def test_sp_create_and_add_password_invalid_start_date_time_returns_structured_error():
+    """Review round 1 regression (PRD-21618): a malformed start_date_time
+    must not raise an unhandled ValueError out of the tool call -- it has to
+    surface as the connector's structured error envelope, same as every
+    other error path in this tool. Neither POST call should fire once the
+    date fails to parse."""
+    client = _RoutedClient(
+        get_responses={"/servicePrincipals": {"value": []}},
+        post_responses={"/servicePrincipals": {"id": "sp-new"}},
+    )
+    payload = await _call_sp(client, app_id="app-1", start_date_time="not-a-date")
+
+    assert payload["error"]["code"] == "invalid_argument"
+    assert payload["error"]["retryable"] is False
+    assert "not-a-date" in payload["error"]["message"]
+    assert client.post_calls == [("/servicePrincipals", {"appId": "app-1"})]
+
+
+@pytest.mark.asyncio
+async def test_sp_create_and_add_password_create_failure_returns_envelope():
+    """TC5/AC5: a 404 from the create-service-principal step (unknown
+    app_id) surfaces as the structured not_found envelope, not an exception
+    propagating out of the tool call."""
+    client = _RoutedClient(
+        get_responses={"/servicePrincipals": {"value": []}},
+        post_responses={"/servicePrincipals": GraphError(404, "appId not found")},
+    )
+    payload = await _call_sp(client, app_id="bad-app")
+
+    assert payload["error"]["code"] == "not_found"
+    assert payload["error"]["retryable"] is False
+
+
+@pytest.mark.asyncio
+async def test_sp_create_and_add_password_ambiguous_match_returns_structured_error():
+    """TC6/AC6: more than one existing service principal for app_id ->
+    structured service_principal_ambiguous error listing the candidate ids,
+    and neither POST /servicePrincipals nor POST .../addPassword is called."""
+    client = _RoutedClient(
+        get_responses={"/servicePrincipals": {"value": [{"id": "sp-a"}, {"id": "sp-b"}]}},
+    )
+    payload = await _call_sp(client, app_id="app-1")
+
+    assert payload["error"]["code"] == "service_principal_ambiguous"
+    assert payload["error"]["candidates"] == ["sp-a", "sp-b"]
+    assert client.post_calls == []
+
+
+@pytest.mark.asyncio
+async def test_sp_create_and_add_password_without_token_returns_no_token_envelope():
+    """TC8/AC8: no X-Ms-Graph-Token header (client_factory() -> None) ->
+    the connector's standard NO_TOKEN envelope, unchanged from every other
+    tool's behavior."""
+    from graph_mcp.tools._common import NO_TOKEN
+
+    mcp = _sp_mcp(None)
+    result = (
+        await mcp.call_tool(
+            "graph_service_principal_create_and_add_password", {"app_id": "app-1"}
+        )
+    )[0][0].text
+    assert result == NO_TOKEN
+
+
+@pytest.mark.asyncio
+async def test_sp_create_and_add_password_secret_appears_exactly_once():
+    """TC9/AC9: secret_text appears exactly once in the JSON payload; there
+    is no logging call anywhere in this code path to leak it a second time."""
+    client = _RoutedClient(
+        get_responses={"/servicePrincipals": {"value": []}},
+        post_responses={
+            "/servicePrincipals": {"id": "sp-new"},
+            "/servicePrincipals/sp-new/addPassword": {
+                "secretText": "only-once-secret",
+                "keyId": "k",
+            },
+        },
+    )
+    mcp = _sp_mcp(client)
+    raw = (
+        await mcp.call_tool(
+            "graph_service_principal_create_and_add_password", {"app_id": "app-1"}
+        )
+    )[0][0].text
+
+    assert raw.count("only-once-secret") == 1
 
 
 # --- PRD-21581: graph_get_security_defaults_policy ---------------------------

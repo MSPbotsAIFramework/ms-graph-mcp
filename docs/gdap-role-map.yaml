@@ -103,6 +103,12 @@ graph_list_domains:
   roles:
   - Directory Readers
   note: 'Read-only: lists the tenant''s verified domains.'
+graph_list_applications:
+  roles:
+  - Directory Readers
+  note: 'Read-only: lists Entra ID app registrations and their client-secret
+    expiry metadata. Role is assumed by analogy with this connector''s other
+    read-only directory listings, not yet verified on a real tenant (PRD-21582).'
 graph_send_mail:
   roles: null
   note: No Entra role grants delegated mail-send; gated by Mail.Send consent, not
@@ -119,6 +125,10 @@ graph_read_mail_attachment:
   roles: null
   note: No Entra role grants mailbox content access; gated by Mail.Read consent, not
     a role.
+graph_delete_message:
+  roles: null
+  note: No Entra role grants mailbox content mutation; gated by Mail.ReadWrite consent,
+    not a role.
 graph_search_sites:
   roles:
   - SharePoint Administrator
@@ -187,6 +197,25 @@ graph_list_gdap_roles:
   note: 'Meta tool: serves this file''s own contents (PRD-21193); not itself a client-tenant
     action, so it carries no role of its own -- included here so the registered-tools/yaml/README
     three-way consistency check (AC7) has no silent exception.'
+graph_list_named_locations:
+  roles:
+  - Security Reader
+  note: Read-only; resolves a conditional-access named location id (or lists all)
+    to its IP ranges or countries (PRD-21580). Role assumed as the narrowest
+    purpose-built role for Policy.Read.All over conditionalAccess/namedLocations;
+    not verified against a live tenant at design time (see ticket Open question Q1) --
+    only this metadata row needs correcting if wrong, no code/contract change.
+graph_service_principal_create_and_add_password:
+  roles:
+  - Cloud Application Administrator
+  - Application Administrator
+  note: Finds or creates a service principal for the given appId, then adds it
+    a short-lived password credential (PRD-21618). Both Microsoft Learn
+    reference pages for POST /servicePrincipals and POST
+    /servicePrincipals/{id}/addPassword list these two built-in roles (plus
+    ownership-conditioned roles not listed here, since this tool is used by
+    an MSP admin acting on a client tenant's app, not the app's own owner) --
+    verified against Microsoft Learn 2026-10-31, not assumed.
 graph_get_security_defaults_policy:
   roles:
   - Security Reader
