@@ -102,6 +102,7 @@ _NON_READ_ONLY = {
     "graph_transfer_onedrive",
     "graph_start_cloud_sync",
     "graph_service_principal_create_and_add_password",
+    "graph_create_invitation",
 }
 
 
