@@ -1,6 +1,6 @@
 # PRD-21618 · Code review
 
-Status: frozen @ 72e737f
+Status: frozen @ 3b323a9
 
 ## Round 1 · 2026-10-31 · reviewed dev/PRD-21618 @ 83590c9 (base 443fe48)
 
@@ -92,3 +92,32 @@ Fixing (2) and (3) in the same pass as (1), rather than only the minimum require
 ### Round 3 conclusion
 
 The literal blocker (new tool's description over the 500-char cap) was already fixed by an out-of-band commit on `master` before this dev leg resumed; this dev leg verified that fix, then completed review's root-cause ask by fixing the test's masking mechanism itself and the second violation it had been hiding. Gate is green end-to-end. `dev/PRD-21618` pushed at `72e737f`, dev-lock released. Next: code review of this round's diff (`080f4ef...72e737f`, scoped to `tests/test_tools.py` + the two docstring trims), then merge, INT publish, and connector wiki in the review leg.
+
+## Round 4 · 2026-11-05 · reviewed 3b323a9 (base 080f4ef) · dev/PRD-21618
+
+Verdict: approved
+
+Scope: `080f4ef...3b323a9` (Round 3 dev-leg fix: `tests/test_tools.py`, `src/graph_mcp/tools/groups.py`, `src/graph_mcp/tools/mail.py`, `docs/tickets/PRD-21618.ac.json`, this file), plus the out-of-band commit `080f4ef` itself (`src/graph_mcp/tools/service_principals.py` docstring trim, authored `claude <claude@mspbots.ai>`, already on `master`, never reviewed before this round). Base `080f4ef` is the master sha recorded in the `[DEV]` stub.
+
+### Round 3 fix check
+
+1. Masking root cause: `test_tools_list_snapshot` now collects every per-tool violation and asserts once (`tests/test_tools.py:197-221`); every check the old bare asserts made is still made (required params, annotations present, readOnlyHint for non-`_NON_READ_ONLY` tools, description <=500, first line <=100, no `API:` leak). Verified.
+2. `graph_service_principal_create_and_add_password` (`080f4ef`), `graph_list_user_groups`, `graph_delete_message`: docstring-only prose trims; every behavioral statement the agent needs (reuse vs create, not idempotent, one-time `secret_text`, `Application.ReadWrite.All` + re-consent; pagination; Deleted Items not purge, idempotent, no undo) is kept. No signature, parameter, return shape or annotation change.
+3. TC10 in `PRD-21618.ac.json` moved `partial` -> `pass` with evidence that matches the re-run below.
+
+### Full gate, re-run independently on dev01 (not reused from the [DEV] stub)
+
+- `uv run --frozen pytest -q` @ `3b323a9`: 216 passed, 0 failed.
+- `uvx ruff check .`: 48 errors, same count the Round 3 notes report for pristine `master @ 080f4ef`; no finding in the changed lines.
+- `grep -rnP '[\x{4e00}-\x{9fff}]' src tests README.md`: no hits.
+- MCP checklist (credentials header-only, stateless, structured errors, README connector section): untouched by this round; still as approved in Round 2.
+
+### Findings
+
+1. [suggestion] docs/tickets/PRD-21618-review.md:3 — the Round 3 dev leg rewrote the `Status: frozen @` header of an already-frozen review record (`3b323a9`). Review records are written by the review leg; dev should only append its own notes. No functional impact; this round re-freezes the header at the reviewed sha.
+2. [suggestion] src/graph_mcp/tools/service_principals.py:84 — commit `080f4ef` landed on `master` directly under a non-pipeline identity (`claude <claude@mspbots.ai>`) without a dev branch, dev-lock or review. Its content is reviewed and fine here; the process gap is noted for the humans who own the repo.
+3. [suggestion] tests/test_tools.py:216 — `description.strip().splitlines()[0]` raises `IndexError` for a tool with an empty description instead of adding a failure entry. Pre-existing behavior (same expression before this round), only reachable if someone registers a tool without a docstring.
+
+### Conclusion
+
+No must-fix. The INT-publish blocker is fixed at its root (masking) and both violations it hid are fixed. Approved for re-sync with `master`, merge, INT publish and connector wiki check (vendor-mcp, single repo, `Release order: any`).
