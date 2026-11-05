@@ -1,0 +1,42 @@
+# PRD-21804 · Code review
+
+Status: frozen @ 6602bae
+
+## Round 1 · 2026-11-05 · reviewed dev/PRD-21804 @ 54c52bc (base 080f4ef)
+
+Verdict: changes requested
+
+### Findings
+
+1. [must-fix] docs/tickets/PRD-21804.md:174 — Self-test claims `uv sync && uv run pytest -q` baseline (pristine `master` @ `080f4ef`) is `216 passed` and, after this ticket's change, final is `219 passed` with "0 failures, 0 skips". Both claims are false. Reproduced independently in a detached worktree at `master` @ `080f4ef`: `1 failed, 215 passed` (`test_tools_list_snapshot` fails — `graph_list_user_groups: description too long`, `547 > 500`). Reproduced again on `dev/PRD-21804` @ `54c52bc` (full `uv run pytest -q`, no `-k` filter): `1 failed, 218 passed`, same failure, same tool. `graph_list_user_groups` is not touched by this ticket (only `graph_list_groups`'s own docstring and `$select`/`sync_source` loop changed), so this is a pre-existing baseline-red failure, not a regression introduced here — but `references/REVIEW.md` §3 requires every baseline-red WARN to be written into the "Self-test" section ("遗留失败（基线即红，与本次无关）"), and its own closing line says an undisclosed WARN downgrades to BLOCKER. Nothing in the Self-test section, the test-case matrix, or the Handoff section mentions this failure; instead the doc affirmatively states "0 failures, 0 skips", which a reviewer or BA would reasonably read as "gate is clean." Fix: correct the stated pytest counts to match actual output (`1 failed, 215 passed` baseline; `1 failed, 218 passed` final) and add the "遗留失败（基线即红，与本次无关）" entry naming `test_tools_list_snapshot` / `graph_list_user_groups` description length (547 > 500, introduced by PRD-21676, not by this ticket). No code change required — this ticket's own 5 directly-relevant tests (`test_list_groups_returns_is_assignable_to_role`, `test_list_groups_derives_sync_source_and_returns_on_premises_sync_enabled`, `test_list_groups_description_documents_is_assignable_to_role`, `test_list_groups_paginates_with_skiptoken`, plus the two `display_name`/`exact` regression tests) all pass, confirmed independently via `uv run pytest -q tests/test_tools.py -k list_groups` -> `5 passed`.
+
+### Verification notes (not findings)
+
+- `src/graph_mcp/tools/groups.py` diff matches the tech design exactly: `$select` adds `onPremisesSyncEnabled,isAssignableToRole`; post-slice loop sets `sync_source` with the identical `"on-premises" if x.get("onPremisesSyncEnabled") else "cloud"` rule already used by `graph_get_group`/`graph_list_user_groups`; no coercion of `isAssignableToRole`, confirmed by `test_list_groups_returns_is_assignable_to_role` asserting `None is not False`.
+- Docstring update documents both new fields, kept under the 500-char cap (confirmed: `graph_list_groups`'s own entry in `test_tools_list_snapshot` does not appear in the failure — only `graph_list_user_groups` does).
+- Scope: the ticket's own citation of a "paged branch at :297" is a mis-citation pointing at the unrelated `graph_list_owned_groups` tool; the design's Non-goals section correctly scopes this ticket to `graph_list_groups` only, matching the Done-when criteria verbatim. Not a must-fix — `graph_list_owned_groups` is unchanged, as intended.
+- README connector-section (`README.md` lines 5-75) byte-diffed against `~/.claude/skills/vendor-mcp-development/reference/readme-connector-section.md`: identical. Tool-table row for `graph_list_groups` (`README.md:158`) is unchanged, correctly so (still a generic one-line description, no field enumeration expected there).
+- No Chinese text in any changed file (`src/graph_mcp/tools/groups.py`, `tests/test_tools.py`, `docs/tickets/PRD-21804.md`, `docs/tickets/PRD-21804.ac.json`), confirmed independently.
+- `docs/tickets/PRD-21804.ac.json` validates (`ticket_store.py validate`: "ledger OK: 6 cases").
+- No credential/header/shared-state changes; not applicable to this diff.
+
+## Round 2 · 2026-11-05 · reviewed 6602bae (base 7c30fb2)
+
+Verdict: approved
+
+### Round-1 must-fix check
+
+1. Fixed. `docs/tickets/PRD-21804.md` Self-test now states the actual counts at `2578035` (`1 failed, 215 passed` baseline; `1 failed, 218 passed` final) and discloses the pre-existing `test_tools_list_snapshot` / `graph_list_user_groups` (547 > 500) failure as baseline-red and unrelated. The dev leg did not append a "Fixes" section to this review record; the fix is recorded in the main doc's Handoff "Round-1 rework" bullet instead (commits `c412f3b`, `aa22912`, `6602bae`).
+
+### Findings
+
+1. [suggestion] docs/tickets/PRD-21804-review.md — round-1 fixes should be appended here as a "Fixes" section (per legs/review.md) rather than only in the main doc's Handoff; no effect on behaviour or acceptance.
+2. [suggestion] src/graph_mcp/tools/groups.py — `graph_list_owned_groups` still selects only the original five fields and lacks `isAssignableToRole` / `sync_source`; explicitly out of scope per the design's Non-goals, already listed as a follow-up.
+
+### Verification notes (not findings)
+
+- Scope since round 1: `git diff 7c30fb2...6602bae -- src tests` is the same feature change as round 1 (`$select` adds `onPremisesSyncEnabled,isAssignableToRole`; `sync_source` derived with the same rule as `graph_get_group` (`groups.py:406`) and `graph_list_user_groups` (`groups.py:174`); no coercion of `isAssignableToRole`), plus 3 new tests. The only other commits are the doc correction and a clean sync merge of `master` @ `7c30fb2`.
+- Gate re-run independently on `6602bae` (synced with `master` @ `7c30fb2`): `uv run pytest -q` -> `246 passed, 1 warning`. The pre-existing `test_tools_list_snapshot` failure is resolved on master by PRD-21618; `graph_list_groups`'s docstring is within the 500-char cap.
+- MCP checklist: no credential / header / shared-state change; tool name and input schema unchanged; output change is additive; README connector section untouched; no Chinese text in changed files.
+- TC5 (cross-connector match against the GDAP connector on INT tenant 2qmxyw) not run by dev, needs a live tenant; not a blocker per mcp-track section 3.
+

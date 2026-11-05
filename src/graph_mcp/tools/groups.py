@@ -210,9 +210,10 @@ def register(mcp: FastMCP, client_factory: Callable[[], GraphClient | None]) -> 
         """List or search Entra ID groups by display name, one page at a time.
 
         Use to resolve a group name to its object id for graph_assign_groups.
-        When has_more is true, call again with next_page_token to get the
-        next page. (PRD-20393: see graph_list_user_groups's docstring for the
-        same one-page-per-call contract change.)
+        Each entry has isAssignableToRole (true for role-assignable groups,
+        null for ordinary groups, PRD-21676) and sync_source ("on-premises"
+        for AD-synced groups, else "cloud"). has_more=true: call again with
+        next_page_token (one Graph page per call — PRD-20393).
         """
         client = client_factory()
         if client is None:
@@ -220,7 +221,10 @@ def register(mcp: FastMCP, client_factory: Callable[[], GraphClient | None]) -> 
 
         max_results = max(1, min(max_results, _HARD_CAP_MAX_RESULTS))
         params: dict = {
-            "$select": "id,displayName,groupTypes,securityEnabled,mailEnabled",
+            "$select": (
+                "id,displayName,groupTypes,securityEnabled,mailEnabled,"
+                "onPremisesSyncEnabled,isAssignableToRole"
+            ),
             "$top": str(min(max_results, _GRAPH_TOP_MAX)),
         }
         if page_token:
@@ -235,6 +239,10 @@ def register(mcp: FastMCP, client_factory: Callable[[], GraphClient | None]) -> 
         try:
             result = await client.get("/groups", params=params)
             groups = result.get("value", [])[:max_results]
+            for group in groups:
+                group["sync_source"] = (
+                    "on-premises" if group.get("onPremisesSyncEnabled") else "cloud"
+                )
             next_token = skiptoken(result.get("@odata.nextLink"))
             return dump_json_capped(
                 {
