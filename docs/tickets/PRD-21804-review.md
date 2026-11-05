@@ -1,5 +1,7 @@
 # PRD-21804 · Code review
 
+Status: frozen @ 6602bae
+
 ## Round 1 · 2026-11-05 · reviewed dev/PRD-21804 @ 54c52bc (base 080f4ef)
 
 Verdict: changes requested
@@ -17,3 +19,24 @@ Verdict: changes requested
 - No Chinese text in any changed file (`src/graph_mcp/tools/groups.py`, `tests/test_tools.py`, `docs/tickets/PRD-21804.md`, `docs/tickets/PRD-21804.ac.json`), confirmed independently.
 - `docs/tickets/PRD-21804.ac.json` validates (`ticket_store.py validate`: "ledger OK: 6 cases").
 - No credential/header/shared-state changes; not applicable to this diff.
+
+## Round 2 · 2026-11-05 · reviewed dev/PRD-21804 @ 6602bae (base 7c30fb2)
+
+Verdict: approved
+
+### Round-1 must-fix check
+
+1. Fixed. `docs/tickets/PRD-21804.md` Self-test now states the actual counts at `2578035` (`1 failed, 215 passed` baseline; `1 failed, 218 passed` final) and discloses the pre-existing `test_tools_list_snapshot` / `graph_list_user_groups` (547 > 500) failure as baseline-red and unrelated. The dev leg did not append a "Fixes" section to this review record; the fix is recorded in the main doc's Handoff "Round-1 rework" bullet instead (commits `c412f3b`, `aa22912`, `6602bae`).
+
+### Findings
+
+1. [suggestion] docs/tickets/PRD-21804-review.md — round-1 fixes should be appended here as a "Fixes" section (per legs/review.md) rather than only in the main doc's Handoff; no effect on behaviour or acceptance.
+2. [suggestion] src/graph_mcp/tools/groups.py — `graph_list_owned_groups` still selects only the original five fields and lacks `isAssignableToRole` / `sync_source`; explicitly out of scope per the design's Non-goals, already listed as a follow-up.
+
+### Verification notes (not findings)
+
+- Scope since round 1: `git diff 7c30fb2...6602bae -- src tests` is the same feature change as round 1 (`$select` adds `onPremisesSyncEnabled,isAssignableToRole`; `sync_source` derived with the same rule as `graph_get_group` (`groups.py:406`) and `graph_list_user_groups` (`groups.py:174`); no coercion of `isAssignableToRole`), plus 3 new tests. The only other commits are the doc correction and a clean sync merge of `master` @ `7c30fb2`.
+- Gate re-run independently on `6602bae` (synced with `master` @ `7c30fb2`): `uv run pytest -q` -> `246 passed, 1 warning`. The pre-existing `test_tools_list_snapshot` failure is resolved on master by PRD-21618; `graph_list_groups`'s docstring is within the 500-char cap.
+- MCP checklist: no credential / header / shared-state change; tool name and input schema unchanged; output change is additive; README connector section untouched; no Chinese text in changed files.
+- TC5 (cross-connector match against the GDAP connector on INT tenant 2qmxyw) not run by dev, needs a live tenant; not a blocker per mcp-track section 3.
+
