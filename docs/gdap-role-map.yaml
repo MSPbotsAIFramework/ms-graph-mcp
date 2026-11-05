@@ -216,3 +216,10 @@ graph_service_principal_create_and_add_password:
     ownership-conditioned roles not listed here, since this tool is used by
     an MSP admin acting on a client tenant's app, not the app's own owner) --
     verified against Microsoft Learn 2026-10-31, not assumed.
+graph_get_security_defaults_policy:
+  roles:
+  - Security Reader
+  note: 'Read-only: reads whether the tenant''s Security Defaults policy is enabled.
+    Security Reader is Microsoft''s least-privileged role for reading tenant security
+    configuration; not yet confirmed against Microsoft''s GDAP task-to-role table or
+    a real tenant -- see PRD-21581 Open Questions.'
