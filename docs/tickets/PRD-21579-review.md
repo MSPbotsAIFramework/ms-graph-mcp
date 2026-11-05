@@ -1,5 +1,7 @@
 # PRD-21579 · Code review
 
+Status: frozen @ 4e0b58d
+
 ## Round 1 · 2026-11-05 · reviewed dev/PRD-21579 @ 5052052 (base master @ 080f4ef)
 
 Verdict: changes requested
@@ -21,3 +23,23 @@ Verdict: changes requested
    - Re-ran the full gate set on the unchanged branch tip to confirm nothing else regressed since round 1: `uvx ruff check .` -> `48 errors` (same as both the original Self-test and pristine `master @ 080f4ef` — net zero new lint findings, unchanged). No code or test file was modified by this fix; only this review doc was amended.
 
 Suggestions 1–2 (non-blocking, cosmetic/naming): left as-is. Both are explicitly marked "not worth a rename on its own" / cosmetic-only in round 1's own text, and this round's commit is docs-only (no code commit to piggyback a cosmetic rename onto) — deferring both, consistent with "只改 must_fix 列出的项".
+
+## Round 2 · 2026-11-05 · reviewed dev/PRD-21579 @ 4e0b58d (base master @ 080f4ef)
+
+Verdict: approved
+
+### Findings
+
+No new findings. Independently re-verified round 1's Fixes this round rather than taking them on trust:
+
+1. `git diff --stat ef45920 4e0b58d` touches only `docs/tickets/PRD-21579-review.md` (8 insertions, 1 deletion) — no code or test file changed since round 1's reviewed sha.
+2. Re-ran `uv run pytest -q` on `dev/PRD-21579 @ 4e0b58d`: `1 failed, 219 passed` — matches the Fixes section's numbers exactly. The sole failure is `tests/test_tools.py::test_tools_list_snapshot` (`graph_list_user_groups: description too long, assert 547 <= 500`).
+3. Confirmed the failure is genuinely pre-existing and unrelated to this ticket: `git log -L '/async def graph_list_user_groups/,/"""/:src/graph_mcp/tools/groups.py'` shows the offending docstring ("List groups a user directly belongs to, one page at a time...") was last written by `722e955 feat(users,groups): offboarding Graph interface changes (PRD-20393)`; `git merge-base --is-ancestor 722e955 080f4eff9a9632504b5318e65551f4584a0f6022` succeeds, so that commit — and the 547-char docstring — predate this ticket's base `master @ 080f4ef`. This ticket's commits (`866aba7`, `ce12bc1`) never touch `groups.py`.
+4. `uvx ruff check .` -> `Found 48 errors` — unchanged from round 1 / baseline, confirming no new lint regressions.
+5. Disclosure requirement (`references/REVIEW.md` §3, "每条 WARN 都要落在工单文档里") is satisfied: the baseline-red failure is now named with root cause (pre-existing, PRD-20393, `graph_list_user_groups`, 547>500 chars, reproducible on pristine `master @ 080f4ef`) in this review record under `docs/tickets/`. The frozen main doc (`PRD-21579.md`) itself is correctly left untouched per `legs/dev.md` S1 ("主文档（已冻结）不动") and `docs-tree.md` §5 (frozen files only get the "Superseded by" edit, not general corrections) — recording the correction here, in the review record, is the right place once the main doc is already frozen.
+
+Round 1 must-fix 1 is resolved by disclosure (WARN, not BLOCKER) per `references/REVIEW.md` §3.
+
+Suggestions 1–2 from round 1 (cosmetic: `instructions=` domain count wording; `policies.py` vs `conditional_access_policies.py` naming) remain open, non-blocking; left as-is per round 1's own text ("not worth a rename on its own") and this round's docs-only commit. Not re-raised as must-fix.
+
+Status: frozen @ 4e0b58d
