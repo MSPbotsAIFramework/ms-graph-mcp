@@ -228,6 +228,14 @@ graph_service_principal_create_and_add_password:
     ownership-conditioned roles not listed here, since this tool is used by
     an MSP admin acting on a client tenant's app, not the app's own owner) --
     verified against Microsoft Learn 2026-10-31, not assumed.
+graph_create_invitation:
+  roles:
+  - Guest Inviter
+  note: 'Invites an external email address as an Entra ID B2B guest user and optionally
+    emails the invitation. Directory Writers and User Administrator also carry this
+    permission per Microsoft''s docs; Guest Inviter is the purpose-built least-privileged
+    role, not yet confirmed against a real GDAP relationship -- see PRD-21584 Open
+    Questions.'
 graph_get_security_defaults_policy:
   roles:
   - Security Reader
