@@ -69,6 +69,7 @@ EXPECTED_TOOLS = {
     "graph_transfer_onedrive": {"source_user_id", "recipient_user_id"},
     "graph_start_cloud_sync": {"user_id"},
     "graph_list_gdap_roles": set(),
+    "graph_list_conditional_access_policies": set(),
     "graph_list_named_locations": set(),
     "graph_service_principal_create_and_add_password": {"app_id"},
     "graph_get_security_defaults_policy": set(),
@@ -205,7 +206,13 @@ async def test_tools_list_snapshot():
     # see docs/tickets/PRD-21581.md Current state); this is a distinct,
     # zero-argument read of its own Graph resource (/policies/*), not a mode
     # flag on an existing tool.
-    assert len(names) <= 51, "tool count should stay within SOP's <=20 guideline (+31 justified)"
+    # +1 for graph_list_conditional_access_policies (PRD-21579): no existing
+    # tool reads /identity/conditionalAccess/policies; Rewst's cited flows
+    # (change-notification + MFA reporting) need the raw policy list, a
+    # distinct endpoint from every other domain, not a mode flag. Distinct
+    # from graph_list_named_locations (PRD-21580) above, which resolves a
+    # location id referenced by a policy's conditions, not the policy itself.
+    assert len(names) <= 52, "tool count should stay within SOP's <=20 guideline (+32 justified)"
 
     by_name = {t.name: t for t in tools}
     for name, expected_required in EXPECTED_TOOLS.items():
@@ -2467,6 +2474,95 @@ async def test_list_domains_filters_unverified_by_default():
         (await mcp.call_tool("graph_list_domains", {"verified_only": False}))[0][0].text
     )
     assert result["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_graph_list_conditional_access_policies_returns_all_fields():
+    """TC-GRAPH-001/AC1."""
+    from graph_mcp.tools import policies
+
+    mcp, client = _register(policies)
+    policy = {
+        "id": "a1b2c3d4-0000-0000-0000-000000000001",
+        "displayName": "Require MFA for all users",
+        "state": "enabled",
+        "createdDateTime": "2025-01-10T12:00:00Z",
+        "modifiedDateTime": "2026-09-01T08:30:00Z",
+        "conditions": {"users": {"includeUsers": ["All"]}},
+        "grantControls": {"operator": "OR", "builtInControls": ["mfa"]},
+        "sessionControls": None,
+    }
+    client._result = {"value": [policy, {**policy, "id": "a1b2c3d4-0000-0000-0000-000000000002"}]}
+
+    result = json.loads(
+        (await mcp.call_tool("graph_list_conditional_access_policies", {}))[0][0].text
+    )
+    assert client.calls[0][0] == "/identity/conditionalAccess/policies"
+    assert result["count"] == 2
+    for key in (
+        "id",
+        "displayName",
+        "state",
+        "createdDateTime",
+        "modifiedDateTime",
+        "conditions",
+        "grantControls",
+        "sessionControls",
+    ):
+        assert key in result["policies"][0]
+
+
+@pytest.mark.asyncio
+async def test_graph_list_conditional_access_policies_empty_tenant():
+    """TC-GRAPH-002/AC2."""
+    from graph_mcp.tools import policies
+
+    mcp, client = _register(policies)
+    client._result = {"value": []}
+
+    result = json.loads(
+        (await mcp.call_tool("graph_list_conditional_access_policies", {}))[0][0].text
+    )
+    assert result == {"count": 0, "policies": []}
+
+
+@pytest.mark.asyncio
+async def test_graph_list_conditional_access_policies_state_filter():
+    """TC-GRAPH-003/AC3."""
+    from graph_mcp.tools import policies
+
+    mcp, client = _register(policies)
+    client._result = {
+        "value": [
+            {"id": "1", "state": "enabled"},
+            {"id": "2", "state": "disabled"},
+            {"id": "3", "state": "enabledForReportingButNotEnforced"},
+        ]
+    }
+
+    result = json.loads(
+        (
+            await mcp.call_tool("graph_list_conditional_access_policies", {"state": "enabled"})
+        )[0][0].text
+    )
+    assert result["count"] == 1
+    assert result["policies"][0]["id"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_graph_list_conditional_access_policies_missing_scope_403():
+    """TC-GRAPH-004/AC4."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import policies
+
+    mcp = FastMCP(name="test")
+    client = _RaisingGetClient(403)
+    policies.register(mcp, lambda: client)
+
+    result = await mcp.call_tool("graph_list_conditional_access_policies", {})
+    payload = json.loads(result[0][0].text)
+    assert payload["error"]["code"] == "unauthorized"
 
 
 @pytest.mark.asyncio

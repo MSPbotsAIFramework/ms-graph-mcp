@@ -202,6 +202,13 @@ graph_list_gdap_roles:
   note: 'Meta tool: serves this file''s own contents (PRD-21193); not itself a client-tenant
     action, so it carries no role of its own -- included here so the registered-tools/yaml/README
     three-way consistency check (AC7) has no silent exception.'
+graph_list_conditional_access_policies:
+  roles:
+  - Security Reader
+  - Conditional Access Administrator
+  - Security Administrator
+  note: 'Any of; read-only. Security Reader is the least-privileged Entra role
+    Microsoft documents as sufficient to view Conditional Access policies.'
 graph_list_named_locations:
   roles:
   - Security Reader
