@@ -77,19 +77,20 @@ def create_mcp_server(settings: Settings) -> FastMCP:
         name="graph-mcp",
         instructions=(
             "Microsoft Graph is the API for Entra ID and "
-            "Microsoft 365 data. It exposes 8 tool domains modeling "
+            "Microsoft 365 data. It exposes 9 tool domains modeling "
             "the identity lifecycle: users (search the directory, "
             "create/read/update accounts, "
             "reset passwords, list MFA methods, assign managers, revoke sessions), "
             "groups (search/list groups, manage a user's memberships and owned "
             "groups), licenses (check tenant SKU stock and assign/remove SKUs on a "
-            "user — usage_location must be set first), domains, mail (triage a mailbox with "
+            "user — usage_location must be set first), domains and conditional "
+            "access policies, mail (triage a mailbox with "
             "graph_list_messages -> graph_get_message, and send as the signed-in "
             "user), sites (read/write SharePoint "
             "document libraries: graph_search_sites -> graph_list_drive_items -> "
             "graph_read_file_text for small text files; graph_get_file for "
             "larger/binary), devices (list/remove a user's Intune-enrolled "
-            "devices — needs an Intune license), and calendar (list events, "
+            "devices), calendar (list events, "
             "check free/busy, create and cancel events). "
             "Typical onboarding: graph_list_domains -> graph_check_user_exists "
             "-> graph_create_user -> "
@@ -123,6 +124,7 @@ def create_mcp_server(settings: Settings) -> FastMCP:
         licenses,
         mail,
         offboarding,
+        policies,
         service_principals,
         sites,
         users,
@@ -140,6 +142,7 @@ def create_mcp_server(settings: Settings) -> FastMCP:
     offboarding.register(mcp, client_factory)
     gdap_roles.register(mcp, client_factory)
     conditional_access.register(mcp, client_factory)
+    policies.register(mcp, client_factory)
     service_principals.register(mcp, client_factory)
 
     return mcp

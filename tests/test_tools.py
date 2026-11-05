@@ -30,6 +30,7 @@ EXPECTED_TOOLS = {
     "graph_assign_manager": {"user_id", "manager_id"},
     "graph_remove_manager": {"user_id"},
     "graph_list_auth_methods": {"user_id"},
+    "graph_delete_auth_method": {"user_id", "method_type", "method_id"},
     "graph_create_tap": {"user_id"},
     "graph_revoke_sessions": {"user_id"},
     "graph_assign_groups": {"user_id", "group_ids"},
@@ -68,8 +69,10 @@ EXPECTED_TOOLS = {
     "graph_transfer_onedrive": {"source_user_id", "recipient_user_id"},
     "graph_start_cloud_sync": {"user_id"},
     "graph_list_gdap_roles": set(),
+    "graph_list_conditional_access_policies": set(),
     "graph_list_named_locations": set(),
     "graph_service_principal_create_and_add_password": {"app_id"},
+    "graph_get_security_defaults_policy": set(),
 }
 
 # Tools that are not plain read-only queries (writes / mutations).
@@ -82,6 +85,7 @@ _NON_READ_ONLY = {
     "graph_revoke_sessions",
     "graph_assign_groups",
     "graph_add_group_owner",
+    "graph_delete_auth_method",
     "graph_create_tap",
     "graph_remove_group_member",
     "graph_assign_license",
@@ -165,6 +169,11 @@ async def test_tools_list_snapshot():
     # assignments (graph_list_user_groups deliberately excludes them, see its
     # own /memberOf comment), so this is a distinct endpoint, not a mode flag
     # on an existing tool.
+    # +1 for graph_delete_auth_method (PRD-21583): graph_list_auth_methods was
+    # read-only, so the delete half of the Rewst "Reset Microsoft MFA" runbook
+    # had no equivalent on the platform. method_type is a required Literal
+    # (not an optional mode flag) so the MCP schema rejects an out-of-enum
+    # value before any Graph call is attempted.
     # +1 for graph_list_named_locations (PRD-21580, Rewst gap register item
     # 12): no existing tool reads identity/conditionalAccess/namedLocations,
     # so resolving a CA policy's location id to its IP ranges/countries is a
@@ -191,7 +200,19 @@ async def test_tools_list_snapshot():
     # (see the calendar/mail notes above on rejecting mode-flag splits),
     # since a service principal with no password credential is never
     # independently useful for this use case.
-    assert len(names) <= 49, "tool count should stay within SOP's <=20 guideline (+29 justified)"
+    # +1 for graph_get_security_defaults_policy (PRD-21581, Rewst-to-MSPbots
+    # migration gap item 13): no existing tool reads the tenant's Security
+    # Defaults policy (all 49 prior tools and the GDAP role map were checked,
+    # see docs/tickets/PRD-21581.md Current state); this is a distinct,
+    # zero-argument read of its own Graph resource (/policies/*), not a mode
+    # flag on an existing tool.
+    # +1 for graph_list_conditional_access_policies (PRD-21579): no existing
+    # tool reads /identity/conditionalAccess/policies; Rewst's cited flows
+    # (change-notification + MFA reporting) need the raw policy list, a
+    # distinct endpoint from every other domain, not a mode flag. Distinct
+    # from graph_list_named_locations (PRD-21580) above, which resolves a
+    # location id referenced by a policy's conditions, not the policy itself.
+    assert len(names) <= 52, "tool count should stay within SOP's <=20 guideline (+32 justified)"
 
     by_name = {t.name: t for t in tools}
     # Collect every violation instead of asserting per-tool inside the loop
@@ -2469,6 +2490,95 @@ async def test_list_domains_filters_unverified_by_default():
 
 
 @pytest.mark.asyncio
+async def test_graph_list_conditional_access_policies_returns_all_fields():
+    """TC-GRAPH-001/AC1."""
+    from graph_mcp.tools import policies
+
+    mcp, client = _register(policies)
+    policy = {
+        "id": "a1b2c3d4-0000-0000-0000-000000000001",
+        "displayName": "Require MFA for all users",
+        "state": "enabled",
+        "createdDateTime": "2025-01-10T12:00:00Z",
+        "modifiedDateTime": "2026-09-01T08:30:00Z",
+        "conditions": {"users": {"includeUsers": ["All"]}},
+        "grantControls": {"operator": "OR", "builtInControls": ["mfa"]},
+        "sessionControls": None,
+    }
+    client._result = {"value": [policy, {**policy, "id": "a1b2c3d4-0000-0000-0000-000000000002"}]}
+
+    result = json.loads(
+        (await mcp.call_tool("graph_list_conditional_access_policies", {}))[0][0].text
+    )
+    assert client.calls[0][0] == "/identity/conditionalAccess/policies"
+    assert result["count"] == 2
+    for key in (
+        "id",
+        "displayName",
+        "state",
+        "createdDateTime",
+        "modifiedDateTime",
+        "conditions",
+        "grantControls",
+        "sessionControls",
+    ):
+        assert key in result["policies"][0]
+
+
+@pytest.mark.asyncio
+async def test_graph_list_conditional_access_policies_empty_tenant():
+    """TC-GRAPH-002/AC2."""
+    from graph_mcp.tools import policies
+
+    mcp, client = _register(policies)
+    client._result = {"value": []}
+
+    result = json.loads(
+        (await mcp.call_tool("graph_list_conditional_access_policies", {}))[0][0].text
+    )
+    assert result == {"count": 0, "policies": []}
+
+
+@pytest.mark.asyncio
+async def test_graph_list_conditional_access_policies_state_filter():
+    """TC-GRAPH-003/AC3."""
+    from graph_mcp.tools import policies
+
+    mcp, client = _register(policies)
+    client._result = {
+        "value": [
+            {"id": "1", "state": "enabled"},
+            {"id": "2", "state": "disabled"},
+            {"id": "3", "state": "enabledForReportingButNotEnforced"},
+        ]
+    }
+
+    result = json.loads(
+        (
+            await mcp.call_tool("graph_list_conditional_access_policies", {"state": "enabled"})
+        )[0][0].text
+    )
+    assert result["count"] == 1
+    assert result["policies"][0]["id"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_graph_list_conditional_access_policies_missing_scope_403():
+    """TC-GRAPH-004/AC4."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import policies
+
+    mcp = FastMCP(name="test")
+    client = _RaisingGetClient(403)
+    policies.register(mcp, lambda: client)
+
+    result = await mcp.call_tool("graph_list_conditional_access_policies", {})
+    payload = json.loads(result[0][0].text)
+    assert payload["error"]["code"] == "unauthorized"
+
+
+@pytest.mark.asyncio
 async def test_get_group_reads_by_id():
     from graph_mcp.tools import groups
 
@@ -3381,6 +3491,188 @@ async def test_start_cloud_sync_filters_service_principals_server_side():
     )
     assert client.get_headers[1] == {"ConsistencyLevel": "eventual"}
     assert (next_link, {}) in client.get_calls
+
+
+# ---------------------------------------------------------------------------
+# PRD-21583: graph_delete_auth_method
+# ---------------------------------------------------------------------------
+
+
+class _RaisingDeleteClient:
+    """GraphClient stand-in whose DELETE always raises, to confirm a non-404
+    GraphError comes back as the structured envelope instead of being
+    swallowed (TC3) or propagating as an exception."""
+
+    def __init__(self, status_code: int = 500, message: str = "boom"):
+        self._status_code = status_code
+        self._message = message
+        self.calls: list[str] = []
+
+    async def delete(self, path: str):
+        self.calls.append(path)
+        raise GraphError(self._status_code, self._message)
+
+
+@pytest.mark.asyncio
+async def test_delete_auth_method_success_returns_deleted_true():
+    """TC1/AC1: a 204 from Graph (no exception) reports deleted=true with
+    the echoed params."""
+    from graph_mcp.tools import users
+
+    mcp, client = _register(users)
+    result = json.loads(
+        (
+            await mcp.call_tool(
+                "graph_delete_auth_method",
+                {"user_id": "u1", "method_type": "phoneMethods", "method_id": "m1"},
+            )
+        )[0][0].text
+    )
+
+    assert client.methods == ["DELETE"]
+    assert client.calls[0][0] == "/users/u1/authentication/phoneMethods/m1"
+    assert result == {
+        "user_id": "u1",
+        "method_type": "phoneMethods",
+        "method_id": "m1",
+        "deleted": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_delete_auth_method_404_is_idempotent_success():
+    """TC2/AC2: deleting an already-gone method_id still reports
+    deleted=true -- same idempotent-delete convention as
+    graph_remove_managed_device/graph_remove_manager."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import users
+
+    mcp = FastMCP(name="test")
+    client = _RaisingDeleteClient(404, "Resource not found")
+    users.register(mcp, lambda: client)
+
+    result = json.loads(
+        (
+            await mcp.call_tool(
+                "graph_delete_auth_method",
+                {
+                    "user_id": "u1",
+                    "method_type": "microsoftAuthenticatorMethods",
+                    "method_id": "stale-id",
+                },
+            )
+        )[0][0].text
+    )
+
+    assert client.calls == ["/users/u1/authentication/microsoftAuthenticatorMethods/stale-id"]
+    assert result == {
+        "user_id": "u1",
+        "method_type": "microsoftAuthenticatorMethods",
+        "method_id": "stale-id",
+        "deleted": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_delete_auth_method_non_404_error_is_not_swallowed():
+    """TC3/AC2: a non-404 GraphError (e.g. a transient 500) must come back
+    as the standard error envelope, not as deleted=true."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import users
+
+    mcp = FastMCP(name="test")
+    client = _RaisingDeleteClient(500, "boom")
+    users.register(mcp, lambda: client)
+
+    result = json.loads(
+        (
+            await mcp.call_tool(
+                "graph_delete_auth_method",
+                {"user_id": "u1", "method_type": "phoneMethods", "method_id": "m1"},
+            )
+        )[0][0].text
+    )
+
+    assert client.calls == ["/users/u1/authentication/phoneMethods/m1"]
+    assert result["error"]["code"] == "upstream_error"
+    assert "deleted" not in result
+
+
+@pytest.mark.asyncio
+async def test_delete_auth_method_rejects_invalid_method_type():
+    """TC4/AC3: an out-of-enum method_type is rejected by the MCP tool
+    schema before any Graph call is attempted -- method_type is a required
+    Literal, not a free-form string."""
+    from mcp.server.fastmcp import FastMCP
+    from mcp.server.fastmcp.exceptions import ToolError
+
+    from graph_mcp.tools import users
+
+    mcp = FastMCP(name="test")
+    client = _RaisingDeleteClient()
+    users.register(mcp, lambda: client)
+
+    with pytest.raises(ToolError, match="method_type"):
+        await mcp.call_tool(
+            "graph_delete_auth_method",
+            {"user_id": "u1", "method_type": "not_a_real_method_type", "method_id": "m1"},
+        )
+
+    assert client.calls == [], "schema validation must reject before any Graph call"
+
+
+@pytest.mark.asyncio
+async def test_delete_auth_method_403_returns_unauthorized_envelope():
+    """TC5/AC4: a tenant that has not re-consented for
+    UserAuthenticationMethod.ReadWrite.All gets a 403 from Graph, which must
+    surface as the standard unauthorized envelope -- the same pre-existing
+    rollout condition already documented for graph_create_tap, not a new
+    failure mode introduced by this tool."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import users
+
+    mcp = FastMCP(name="test")
+    client = _RaisingDeleteClient(403, "Insufficient privileges to complete the operation.")
+    users.register(mcp, lambda: client)
+
+    result = json.loads(
+        (
+            await mcp.call_tool(
+                "graph_delete_auth_method",
+                {"user_id": "u1", "method_type": "emailMethods", "method_id": "m1"},
+            )
+        )[0][0].text
+    )
+
+    assert result["error"]["code"] == "unauthorized"
+
+
+@pytest.mark.asyncio
+async def test_delete_auth_method_without_token_returns_no_token_envelope():
+    """TC7/AC6: a missing/invalid X-Ms-Graph-Token header (client_factory
+    returns None) must return the connector's standard not_configured
+    envelope, same as every other tool -- never reach the Graph client at
+    all."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import users
+
+    mcp = FastMCP(name="test")
+    users.register(mcp, lambda: None)
+
+    result = json.loads(
+        (
+            await mcp.call_tool(
+                "graph_delete_auth_method",
+                {"user_id": "u1", "method_type": "phoneMethods", "method_id": "m1"},
+            )
+        )[0][0].text
+    )
+
+    assert result["error"]["code"] == "not_configured"
 
 
 # ---------------------------------------------------------------------------
@@ -4633,3 +4925,158 @@ async def test_sp_create_and_add_password_secret_appears_exactly_once():
     )[0][0].text
 
     assert raw.count("only-once-secret") == 1
+
+
+# --- PRD-21581: graph_get_security_defaults_policy ---------------------------
+
+
+@pytest.mark.asyncio
+async def test_graph_get_security_defaults_policy_returns_policy_fields():
+    """TC1/AC1: happy path returns isEnabled + displayName (and whatever else
+    Graph sends) sourced from the v1.0 policies endpoint, not hard-coded."""
+    from graph_mcp.tools import policies
+
+    mcp, client = _register(
+        policies,
+        get_result={
+            "id": "00000000-0000-0000-0000-000000000005",
+            "displayName": "Security Defaults",
+            "description": "Security defaults is a set of basic identity security mechanisms.",
+            "isEnabled": True,
+        },
+    )
+    result = json.loads(
+        (await mcp.call_tool("graph_get_security_defaults_policy", {}))[0][0].text
+    )
+
+    assert result["isEnabled"] is True
+    assert result["displayName"] == "Security Defaults"
+    assert client.calls == [
+        (
+            "/policies/identitySecurityDefaultsEnforcementPolicy",
+            {"$select": "id,displayName,description,isEnabled"},
+        )
+    ]
+    assert client.methods == ["GET"]
+
+
+@pytest.mark.asyncio
+async def test_graph_get_security_defaults_policy_reflects_disabled_state():
+    """TC2/AC1: a disabled tenant gets isEnabled=false back -- proves the
+    value is read from Graph's response, not hard-coded to true."""
+    from graph_mcp.tools import policies
+
+    mcp, client = _register(
+        policies,
+        get_result={
+            "id": "00000000-0000-0000-0000-000000000005",
+            "displayName": "Security Defaults",
+            "description": "Security defaults is a set of basic identity security mechanisms.",
+            "isEnabled": False,
+        },
+    )
+    result = json.loads(
+        (await mcp.call_tool("graph_get_security_defaults_policy", {}))[0][0].text
+    )
+
+    assert result["isEnabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_graph_get_security_defaults_policy_returns_no_token_without_client():
+    """TC4/AC3: the defensive branch -- client_factory() resolving to None
+    (no per-request Graph client) must return the connector's standard
+    NO_TOKEN envelope, not an unhandled exception. Normal /mcp traffic never
+    reaches this because GatewayTokenMiddleware already rejects it with 401."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import policies
+
+    mcp = FastMCP(name="test")
+    policies.register(mcp, lambda: None)
+
+    result = json.loads(
+        (await mcp.call_tool("graph_get_security_defaults_policy", {}))[0][0].text
+    )
+
+    assert result["error"]["code"] == "not_configured"
+
+
+@pytest.mark.asyncio
+async def test_graph_get_security_defaults_policy_reports_insufficient_privileges():
+    """TC5/AC4: a 403 from Graph (token lacks Policy.Read.All) surfaces as
+    the connector's standard structured error envelope, reusing the existing
+    GraphError/_classify mapping -- no new error-mapping logic in this tool."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import policies
+
+    class _ForbiddenClient:
+        async def get(self, path: str, params=None, extra_headers=None):
+            raise GraphError(403, "Insufficient privileges to complete the operation.")
+
+    mcp = FastMCP(name="test")
+    policies.register(mcp, lambda: _ForbiddenClient())
+
+    result = json.loads(
+        (await mcp.call_tool("graph_get_security_defaults_policy", {}))[0][0].text
+    )
+
+    assert result["error"]["code"] == "unauthorized"
+    assert result["error"]["retryable"] is False
+    assert "Insufficient privileges" in result["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_graph_get_security_defaults_policy_surfaces_rate_limit():
+    """TC5/AC4: a 429 from Graph maps to rate_limited/retryable=True, same
+    as every other tool's error path -- confirms this tool's call site wires
+    into the shared _classify table rather than special-casing one status."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import policies
+
+    class _RateLimitedClient:
+        async def get(self, path: str, params=None, extra_headers=None):
+            raise GraphError(429, "Too many requests.")
+
+    mcp = FastMCP(name="test")
+    policies.register(mcp, lambda: _RateLimitedClient())
+
+    result = json.loads(
+        (await mcp.call_tool("graph_get_security_defaults_policy", {}))[0][0].text
+    )
+
+    assert result["error"]["code"] == "rate_limited"
+    assert result["error"]["retryable"] is True
+
+
+@pytest.mark.asyncio
+async def test_graph_get_security_defaults_policy_no_cross_tenant_leak():
+    """TC6/AC5: two independently-constructed client_factorys (standing in for
+    two concurrent requests, each carrying a different tenant's token) must
+    each return only their own tenant's isEnabled value -- same shape as
+    test_send_mail_attachments_do_not_leak_across_calls for an existing tool.
+    Exercises, but does not re-implement, the connector's existing per-request
+    contextvars isolation (server.py's GatewayTokenMiddleware)."""
+    from graph_mcp.tools import policies
+
+    mcp1, client1 = _register(
+        policies,
+        get_result={"id": "p1", "displayName": "Security Defaults", "isEnabled": True},
+    )
+    mcp2, client2 = _register(
+        policies,
+        get_result={"id": "p1", "displayName": "Security Defaults", "isEnabled": False},
+    )
+
+    result1 = json.loads(
+        (await mcp1.call_tool("graph_get_security_defaults_policy", {}))[0][0].text
+    )
+    result2 = json.loads(
+        (await mcp2.call_tool("graph_get_security_defaults_policy", {}))[0][0].text
+    )
+
+    assert result1["isEnabled"] is True
+    assert result2["isEnabled"] is False
+    assert client1.calls != [] and client2.calls != []

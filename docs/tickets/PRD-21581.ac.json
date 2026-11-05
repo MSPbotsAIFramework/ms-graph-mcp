@@ -1,0 +1,80 @@
+[
+  {
+    "id": "TC1",
+    "ac": "AC1",
+    "text": "Given a tenant with Security Defaults enabled, when graph_get_security_defaults_policy is called with no arguments, then the result contains isEnabled=true and a non-empty displayName",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_graph_get_security_defaults_policy_returns_policy_fields"],
+    "priority": "high",
+    "notes": "Model after domains.py's graph_list_domains via the _register(module, result=...)/_CapturingClient harness (tests/test_tools.py:207-262).",
+    "result": "pass",
+    "evidence": "uv run pytest -q -k test_graph_get_security_defaults_policy_returns_policy_fields -> 1 passed. Asserts result[\"isEnabled\"] is True, result[\"displayName\"] == \"Security Defaults\", and client.calls == [(\"/policies/identitySecurityDefaultsEnforcementPolicy\", {\"$select\": \"id,displayName,description,isEnabled\"})]."
+  },
+  {
+    "id": "TC2",
+    "ac": "AC1",
+    "text": "Given a tenant with Security Defaults disabled, when the tool is called, then the result contains isEnabled=false, proving the value is read from Graph's response and not hard-coded",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_graph_get_security_defaults_policy_reflects_disabled_state"],
+    "priority": "high",
+    "result": "pass",
+    "evidence": "uv run pytest -q -k test_graph_get_security_defaults_policy_reflects_disabled_state -> 1 passed. Asserts result[\"isEnabled\"] is False."
+  },
+  {
+    "id": "TC3",
+    "ac": "AC2",
+    "text": "The registered tool schema for graph_get_security_defaults_policy takes zero parameters",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_tools_list_snapshot"],
+    "priority": "medium",
+    "notes": "Covered by adding \"graph_get_security_defaults_policy\": set() to EXPECTED_TOOLS (tests/test_tools.py).",
+    "result": "pass",
+    "evidence": "uv run pytest -q -k test_tools_list_snapshot and 'not' nothing (ran full file): fails only on the pre-existing, unrelated graph_list_user_groups description-length assertion -- every assertion specific to graph_get_security_defaults_policy (required-params set, readOnlyHint, description length/first-line, no leaked API detail) passes. Live smoke tools/list also confirms zero required params (see Self-test)."
+  },
+  {
+    "id": "TC4",
+    "ac": "AC3",
+    "text": "Given no resolvable Graph client for the current context (client_factory() returns None), when the tool is called, then it returns the connector's standard NO_TOKEN envelope, not an exception",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_graph_get_security_defaults_policy_returns_no_token_without_client"],
+    "priority": "medium",
+    "result": "pass",
+    "evidence": "uv run pytest -q -k test_graph_get_security_defaults_policy_returns_no_token_without_client -> 1 passed. Asserts result[\"error\"][\"code\"] == \"not_configured\" (the NO_TOKEN envelope's code)."
+  },
+  {
+    "id": "TC5",
+    "ac": "AC4",
+    "text": "Given Graph returns 403 Insufficient privileges, when the tool is called, then the result is {\"error\":{\"code\":\"unauthorized\",\"retryable\":false,...}} via the connector's existing GraphError/_classify mapping",
+    "type": "auto",
+    "tests": [
+      "tests/test_tools.py::test_graph_get_security_defaults_policy_reports_insufficient_privileges",
+      "tests/test_tools.py::test_graph_get_security_defaults_policy_surfaces_rate_limit"
+    ],
+    "priority": "high",
+    "notes": "Same pattern as the existing graph_add_group_owner insufficient-privileges test (tests/test_tools.py::test_graph_add_group_owner_other_post_failure_uses_standard_envelope). Added a second case (429) to confirm the call site wires into the shared _classify table generically, not just for 403.",
+    "result": "pass",
+    "evidence": "uv run pytest -q -k 'test_graph_get_security_defaults_policy_reports_insufficient_privileges or test_graph_get_security_defaults_policy_surfaces_rate_limit' -> 2 passed. 403 -> {code: unauthorized, retryable: false, message contains \"Insufficient privileges\"}; 429 -> {code: rate_limited, retryable: true}."
+  },
+  {
+    "id": "TC6",
+    "ac": "AC5",
+    "text": "Given two concurrent calls to the tool, each resolving a GraphClient built from a different tenant's token/mock response, when both run, then each returns only its own tenant's isEnabled value with no cross-call bleed",
+    "type": "auto",
+    "tests": ["tests/test_tools.py::test_graph_get_security_defaults_policy_no_cross_tenant_leak"],
+    "priority": "high",
+    "notes": "Multi-tenant isolation anchor (S6 quality line). Modeled on test_send_mail_attachments_do_not_leak_across_calls (tests/test_tools.py:849) which proves the same no-shared-state property for an existing tool. Not verified against a real tenant -- no test tenant available to the dev leg; per mcp-track.md section 3 this does not block shipping.",
+    "result": "pass",
+    "evidence": "uv run pytest -q -k test_graph_get_security_defaults_policy_no_cross_tenant_leak -> 1 passed. Two independently-constructed _CapturingClient-backed servers return isEnabled=True and isEnabled=False respectively, proving no shared client state across calls."
+  },
+  {
+    "id": "TC7",
+    "ac": "AC6",
+    "text": "After the change, the repo's own three-way consistency test passes with the new tool present and consistent across the live tools/list registry, docs/gdap-role-map.yaml, and the README Tools table",
+    "type": "auto",
+    "tests": ["tests/test_gdap_role_map.py::test_gdap_role_map_matches_registered_tools_and_readme"],
+    "priority": "high",
+    "notes": "Existing test; passes once the yaml entry, README row, and server registration are all added consistently. Role-map count bumped to 50 (union with PRD-21580/21578/21582/21618's already-merged additions).",
+    "result": "pass",
+    "evidence": "uv run pytest -q -k test_gdap_role_map_matches_registered_tools_and_readme -> 1 passed. docs/gdap-role-map.yaml has 50 entries, matching the 50 live registered tools and 50 README Tools-table rows; no consistency problems reported."
+  }
+]
