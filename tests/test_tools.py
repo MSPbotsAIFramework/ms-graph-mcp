@@ -4643,7 +4643,7 @@ async def test_graph_get_security_defaults_policy_returns_policy_fields():
         get_result={
             "id": "00000000-0000-0000-0000-000000000005",
             "displayName": "Security Defaults",
-            "description": "Security defaults is a set of basic identity security mechanisms recommended by Microsoft.",
+            "description": "Security defaults is a set of basic identity security mechanisms.",
             "isEnabled": True,
         },
     )
@@ -4673,7 +4673,7 @@ async def test_graph_get_security_defaults_policy_reflects_disabled_state():
         get_result={
             "id": "00000000-0000-0000-0000-000000000005",
             "displayName": "Security Defaults",
-            "description": "Security defaults is a set of basic identity security mechanisms recommended by Microsoft.",
+            "description": "Security defaults is a set of basic identity security mechanisms.",
             "isEnabled": False,
         },
     )
