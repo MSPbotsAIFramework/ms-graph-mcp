@@ -66,6 +66,7 @@ EXPECTED_TOOLS = {
     "graph_transfer_onedrive": {"source_user_id", "recipient_user_id"},
     "graph_start_cloud_sync": {"user_id"},
     "graph_list_gdap_roles": set(),
+    "graph_get_security_defaults_policy": set(),
 }
 
 # Tools that are not plain read-only queries (writes / mutations).
@@ -159,7 +160,13 @@ async def test_tools_list_snapshot():
     # assignments (graph_list_user_groups deliberately excludes them, see its
     # own /memberOf comment), so this is a distinct endpoint, not a mode flag
     # on an existing tool.
-    assert len(names) <= 45, "tool count should stay within SOP's <=20 guideline (+25 justified)"
+    # +1 for graph_get_security_defaults_policy (PRD-21581, Rewst-to-MSPbots
+    # migration gap item 13): no existing tool reads the tenant's Security
+    # Defaults policy (all 45 prior tools and the GDAP role map were checked,
+    # see docs/tickets/PRD-21581.md Current state); this is a distinct,
+    # zero-argument read of its own Graph resource (/policies/*), not a mode
+    # flag on an existing tool.
+    assert len(names) <= 46, "tool count should stay within SOP's <=20 guideline (+26 justified)"
 
     by_name = {t.name: t for t in tools}
     for name, expected_required in EXPECTED_TOOLS.items():
@@ -3715,3 +3722,158 @@ async def test_graph_list_user_roles_unknown_user_returns_404_envelope():
 
     assert result["error"]["code"] == "not_found"
     assert result["error"]["retryable"] is False
+
+
+# --- PRD-21581: graph_get_security_defaults_policy ---------------------------
+
+
+@pytest.mark.asyncio
+async def test_graph_get_security_defaults_policy_returns_policy_fields():
+    """TC1/AC1: happy path returns isEnabled + displayName (and whatever else
+    Graph sends) sourced from the v1.0 policies endpoint, not hard-coded."""
+    from graph_mcp.tools import policies
+
+    mcp, client = _register(
+        policies,
+        get_result={
+            "id": "00000000-0000-0000-0000-000000000005",
+            "displayName": "Security Defaults",
+            "description": "Security defaults is a set of basic identity security mechanisms recommended by Microsoft.",
+            "isEnabled": True,
+        },
+    )
+    result = json.loads(
+        (await mcp.call_tool("graph_get_security_defaults_policy", {}))[0][0].text
+    )
+
+    assert result["isEnabled"] is True
+    assert result["displayName"] == "Security Defaults"
+    assert client.calls == [
+        (
+            "/policies/identitySecurityDefaultsEnforcementPolicy",
+            {"$select": "id,displayName,description,isEnabled"},
+        )
+    ]
+    assert client.methods == ["GET"]
+
+
+@pytest.mark.asyncio
+async def test_graph_get_security_defaults_policy_reflects_disabled_state():
+    """TC2/AC1: a disabled tenant gets isEnabled=false back -- proves the
+    value is read from Graph's response, not hard-coded to true."""
+    from graph_mcp.tools import policies
+
+    mcp, client = _register(
+        policies,
+        get_result={
+            "id": "00000000-0000-0000-0000-000000000005",
+            "displayName": "Security Defaults",
+            "description": "Security defaults is a set of basic identity security mechanisms recommended by Microsoft.",
+            "isEnabled": False,
+        },
+    )
+    result = json.loads(
+        (await mcp.call_tool("graph_get_security_defaults_policy", {}))[0][0].text
+    )
+
+    assert result["isEnabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_graph_get_security_defaults_policy_returns_no_token_without_client():
+    """TC4/AC3: the defensive branch -- client_factory() resolving to None
+    (no per-request Graph client) must return the connector's standard
+    NO_TOKEN envelope, not an unhandled exception. Normal /mcp traffic never
+    reaches this because GatewayTokenMiddleware already rejects it with 401."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import policies
+
+    mcp = FastMCP(name="test")
+    policies.register(mcp, lambda: None)
+
+    result = json.loads(
+        (await mcp.call_tool("graph_get_security_defaults_policy", {}))[0][0].text
+    )
+
+    assert result["error"]["code"] == "not_configured"
+
+
+@pytest.mark.asyncio
+async def test_graph_get_security_defaults_policy_reports_insufficient_privileges():
+    """TC5/AC4: a 403 from Graph (token lacks Policy.Read.All) surfaces as
+    the connector's standard structured error envelope, reusing the existing
+    GraphError/_classify mapping -- no new error-mapping logic in this tool."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import policies
+
+    class _ForbiddenClient:
+        async def get(self, path: str, params=None, extra_headers=None):
+            raise GraphError(403, "Insufficient privileges to complete the operation.")
+
+    mcp = FastMCP(name="test")
+    policies.register(mcp, lambda: _ForbiddenClient())
+
+    result = json.loads(
+        (await mcp.call_tool("graph_get_security_defaults_policy", {}))[0][0].text
+    )
+
+    assert result["error"]["code"] == "unauthorized"
+    assert result["error"]["retryable"] is False
+    assert "Insufficient privileges" in result["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_graph_get_security_defaults_policy_surfaces_rate_limit():
+    """TC5/AC4: a 429 from Graph maps to rate_limited/retryable=True, same
+    as every other tool's error path -- confirms this tool's call site wires
+    into the shared _classify table rather than special-casing one status."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import policies
+
+    class _RateLimitedClient:
+        async def get(self, path: str, params=None, extra_headers=None):
+            raise GraphError(429, "Too many requests.")
+
+    mcp = FastMCP(name="test")
+    policies.register(mcp, lambda: _RateLimitedClient())
+
+    result = json.loads(
+        (await mcp.call_tool("graph_get_security_defaults_policy", {}))[0][0].text
+    )
+
+    assert result["error"]["code"] == "rate_limited"
+    assert result["error"]["retryable"] is True
+
+
+@pytest.mark.asyncio
+async def test_graph_get_security_defaults_policy_no_cross_tenant_leak():
+    """TC6/AC5: two independently-constructed client_factorys (standing in for
+    two concurrent requests, each carrying a different tenant's token) must
+    each return only their own tenant's isEnabled value -- same shape as
+    test_send_mail_attachments_do_not_leak_across_calls for an existing tool.
+    Exercises, but does not re-implement, the connector's existing per-request
+    contextvars isolation (server.py's GatewayTokenMiddleware)."""
+    from graph_mcp.tools import policies
+
+    mcp1, client1 = _register(
+        policies,
+        get_result={"id": "p1", "displayName": "Security Defaults", "isEnabled": True},
+    )
+    mcp2, client2 = _register(
+        policies,
+        get_result={"id": "p1", "displayName": "Security Defaults", "isEnabled": False},
+    )
+
+    result1 = json.loads(
+        (await mcp1.call_tool("graph_get_security_defaults_policy", {}))[0][0].text
+    )
+    result2 = json.loads(
+        (await mcp2.call_tool("graph_get_security_defaults_policy", {}))[0][0].text
+    )
+
+    assert result1["isEnabled"] is True
+    assert result2["isEnabled"] is False
+    assert client1.calls != [] and client2.calls != []
