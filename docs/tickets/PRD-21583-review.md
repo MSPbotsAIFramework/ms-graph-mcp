@@ -1,6 +1,6 @@
 # PRD-21583 · Code review
 
-## Round 1 · 2026-11-05 · reviewed dev/PRD-21583 @ c8bc43d (base master @ 080f4ef)
+## Round 1 · 2026-11-05 · reviewed c8bc43d (base 080f4ef)
 
 Verdict: approved
 
