@@ -1,5 +1,7 @@
 # PRD-21584 · Code review
 
+Status: frozen @ b1a9429
+
 ## Round 1 · 2026-11-05 · reviewed dev/PRD-21584 @ 67fb8af (base 080f4ef)
 
 Verdict: changes requested
@@ -39,5 +41,27 @@ Must-fix #1 — **investigated, does not reproduce in this environment**. No cod
 - Environment used for all of the above: `uv run python3 --version` → 3.12.16 (the project's pinned interpreter via `uv.lock`). If round 2's environment differs (Python/uv version, OS, parallel test execution, a dirty/stale checkout), naming that difference would make this independently checkable; absent that, three independent fresh checkouts agreeing with each other and with the original Self-test section is the strongest evidence available from this host.
 
 Conclusion: `docs/tickets/PRD-21584.md`'s Self-test section and `PRD-21584.ac.json`'s TC7 evidence note are left unchanged — they are accurate and reproduce. The frozen main document (`Status: frozen @ decd29b`) is not edited, per policy. No code change was needed or made (the reviewer's own assessment — "the underlying code itself ... is sound" — stands). This round's finding is marked disputed for round 2 to confirm or refute independently.
+
+Host: dev05
+
+## Round 2 · 2026-11-05 · reviewed dev/PRD-21584 @ b1a9429 (base 080f4ef)
+
+Verdict: approved
+
+### Findings
+
+No new must-fix or suggestion. `git diff 67fb8af..b1a9429 --stat` shows only `docs/tickets/PRD-21584-review.md` changed (the round-1-rework rebuttal) — no code or other doc changed since round 1's full review pass, so this round's job is to adjudicate round 1's disputed must-fix #1 and confirm nothing else regressed.
+
+Must-fix #1 (round 1) — **refuted, round 1's reproduction was wrong**. Independently re-ran, from scratch, on this host (dev05), without relying on either side's prior numbers:
+
+- `uv run pytest -q` on this worktree (`dev/PRD-21584 @ b1a9429`, same `src/`/`tests/` as `67fb8af`/merge `decd29b`, confirmed via empty `git diff 67fb8af b1a9429 -- src/ tests/`): **`1 failed, 226 passed`** — `tests/test_tools.py::test_tools_list_snapshot` fails with `AssertionError: graph_list_user_groups: description too long`, `assert 547 <= 500`. Matches the doc's and the round-1-rework's figures exactly, not round 1's `227 passed, 0 failures`.
+- Fresh disposable `git worktree` of pristine `master @ 080f4ef` (the cited baseline, removed after the check): **`1 failed, 215 passed`**, same assertion. Matches the doc, not round 1's `216 passed, 0 failed`.
+- The failing description's length comes straight out of the pytest failure output itself (547, not 483) — no separate measurement needed, and it agrees with the round-1-rework's own `create_mcp_server` + `list_tools()` re-check.
+
+Three independent reproductions now agree (original Self-test section, round-1-rework, this round) against one (round 1's original finding). The code (`src/graph_mcp/tools/invitations.py`, `server.py` registration, README/gdap-role-map/test additions) is sound, additive-only, follows the established `GraphClient.post`/`GraphError.to_envelope`/`dump_json_capped`/`NO_TOKEN` pattern used by other write tools (e.g. `service_principals.py`), handles optional fields correctly, and does not log or persist the credential (read once from `client_factory()`, per-request). README Connector section, `docs/gdap-role-map.yaml`, and the tool-count assertions were all updated consistently for the 5-way merge. TC14 remaining `blocked` on a missing real tenant is correctly non-blocking per `references/mcp-track.md` §3.
+
+Root cause of round 1's bad finding is not determined (not this ticket's problem to fix) — possibly a different machine/environment, a stale or dirty checkout, or a `tdd.py` baseline/diff path issue (round 1 itself noted the same non-reproducing pattern on an unrelated prior ticket's review, `PRD-21618-review.md` round 2). No action needed on this ticket either way, since the doc being reviewed was correct all along.
+
+Note: no other must-fix found, confirming round 1's own "no other must-fix" note (nothing changed since that pass).
 
 Host: dev05
