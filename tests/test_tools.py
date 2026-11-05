@@ -66,6 +66,7 @@ EXPECTED_TOOLS = {
     "graph_transfer_onedrive": {"source_user_id", "recipient_user_id"},
     "graph_start_cloud_sync": {"user_id"},
     "graph_list_gdap_roles": set(),
+    "graph_create_invitation": {"invited_user_email_address", "invite_redirect_url"},
 }
 
 # Tools that are not plain read-only queries (writes / mutations).
@@ -91,6 +92,7 @@ _NON_READ_ONLY = {
     "graph_cancel_calendar_event",
     "graph_transfer_onedrive",
     "graph_start_cloud_sync",
+    "graph_create_invitation",
 }
 
 
@@ -159,7 +161,12 @@ async def test_tools_list_snapshot():
     # assignments (graph_list_user_groups deliberately excludes them, see its
     # own /memberOf comment), so this is a distinct endpoint, not a mode flag
     # on an existing tool.
-    assert len(names) <= 45, "tool count should stay within SOP's <=20 guideline (+25 justified)"
+    # +1 for graph_create_invitation (PRD-21584, Rewst gap-register item 16):
+    # inviting an external email as a B2B guest has nothing to do with an
+    # existing user id (there is no user yet) and no tool here reaches
+    # POST /invitations; it is a distinct Graph resource family, not a mode
+    # flag on graph_create_user or graph_assign_groups.
+    assert len(names) <= 46, "tool count should stay within SOP's <=20 guideline (+26 justified)"
 
     by_name = {t.name: t for t in tools}
     for name, expected_required in EXPECTED_TOOLS.items():
@@ -3715,3 +3722,224 @@ async def test_graph_list_user_roles_unknown_user_returns_404_envelope():
 
     assert result["error"]["code"] == "not_found"
     assert result["error"]["retryable"] is False
+
+
+# --- PRD-21584: graph_create_invitation (Rewst gap-register item 16) --------
+
+_INVITE_BASE_ARGS = {
+    "invited_user_email_address": "admin@fabrikam.com",
+    "invite_redirect_url": "https://ginko.com.au/",
+}
+
+_INVITE_GRAPH_RESPONSE = {
+    "id": "a1b2c3d4-0000-1111-2222-333344445555",
+    "invitedUser": {"id": "cbb896f9-8306-49d0-b56b-b8e39cd28825"},
+    "invitedUserEmailAddress": "admin@fabrikam.com",
+    "inviteRedirectUrl": "https://ginko.com.au/",
+    "sendInvitationMessage": True,
+    "inviteRedeemUrl": "https://login.microsoftonline.com/redeem?rd=...",
+    "status": "PendingAcceptance",
+}
+
+
+@pytest.mark.asyncio
+async def test_create_invitation_happy_path_required_fields_only():
+    """TC1/AC1: required-only call posts the two required fields plus the
+    sendInvitationMessage default, and returns the curated fields sourced
+    from Graph's response."""
+    from graph_mcp.tools import invitations
+
+    mcp, client = _register(invitations, result=_INVITE_GRAPH_RESPONSE)
+    result = json.loads(
+        (await mcp.call_tool("graph_create_invitation", _INVITE_BASE_ARGS))[0][0].text
+    )
+
+    assert client.calls[0][0] == "/invitations"
+    body = client.bodies[0]
+    assert body["invitedUserEmailAddress"] == "admin@fabrikam.com"
+    assert body["inviteRedirectUrl"] == "https://ginko.com.au/"
+    assert body["sendInvitationMessage"] is True
+    assert result == {
+        "invited_user_id": "cbb896f9-8306-49d0-b56b-b8e39cd28825",
+        "invited_user_email_address": "admin@fabrikam.com",
+        "invite_redeem_url": "https://login.microsoftonline.com/redeem?rd=...",
+        "status": "PendingAcceptance",
+    }
+
+
+@pytest.mark.asyncio
+async def test_create_invitation_send_invitation_message_false():
+    """TC2/AC2: an explicit false must be forwarded, not dropped like an
+    omitted optional field would be."""
+    from graph_mcp.tools import invitations
+
+    mcp, client = _register(invitations, result=_INVITE_GRAPH_RESPONSE)
+    await mcp.call_tool(
+        "graph_create_invitation", {**_INVITE_BASE_ARGS, "send_invitation_message": False}
+    )
+
+    assert client.bodies[0]["sendInvitationMessage"] is False
+
+
+@pytest.mark.asyncio
+async def test_create_invitation_send_invitation_message_defaults_true():
+    """TC3/AC2: omitting send_invitation_message still emails the guest,
+    matching Rewst's own flow default."""
+    from graph_mcp.tools import invitations
+
+    mcp, client = _register(invitations, result=_INVITE_GRAPH_RESPONSE)
+    await mcp.call_tool("graph_create_invitation", _INVITE_BASE_ARGS)
+
+    assert client.bodies[0]["sendInvitationMessage"] is True
+
+
+@pytest.mark.asyncio
+async def test_create_invitation_forwards_display_name():
+    """TC4/AC3: invited_user_display_name is forwarded verbatim as
+    invitedUserDisplayName."""
+    from graph_mcp.tools import invitations
+
+    mcp, client = _register(invitations, result=_INVITE_GRAPH_RESPONSE)
+    await mcp.call_tool(
+        "graph_create_invitation",
+        {**_INVITE_BASE_ARGS, "invited_user_display_name": "Alice Smith"},
+    )
+
+    assert client.bodies[0]["invitedUserDisplayName"] == "Alice Smith"
+
+
+@pytest.mark.asyncio
+async def test_create_invitation_builds_invited_user_message_info():
+    """TC5/AC4: all three email-customization params combine into one
+    invitedUserMessageInfo object, with cc_recipients shaped as Graph's
+    emailAddress wrapper."""
+    from graph_mcp.tools import invitations
+
+    mcp, client = _register(invitations, result=_INVITE_GRAPH_RESPONSE)
+    await mcp.call_tool(
+        "graph_create_invitation",
+        {
+            **_INVITE_BASE_ARGS,
+            "message_language": "en-US",
+            "customized_message_body": "Welcome to the Ginko IT tenant.",
+            "cc_recipients": ["helpdesk@ginko.com.au"],
+        },
+    )
+
+    info = client.bodies[0]["invitedUserMessageInfo"]
+    assert info["messageLanguage"] == "en-US"
+    assert info["customizedMessageBody"] == "Welcome to the Ginko IT tenant."
+    assert info["ccRecipients"] == [{"emailAddress": {"address": "helpdesk@ginko.com.au"}}]
+
+
+@pytest.mark.asyncio
+async def test_create_invitation_omits_empty_invited_user_message_info():
+    """TC6/AC4: with none of the three email-customization params supplied,
+    the request body must not carry invitedUserMessageInfo at all -- not
+    even as an empty object."""
+    from graph_mcp.tools import invitations
+
+    mcp, client = _register(invitations, result=_INVITE_GRAPH_RESPONSE)
+    await mcp.call_tool("graph_create_invitation", _INVITE_BASE_ARGS)
+
+    assert "invitedUserMessageInfo" not in client.bodies[0]
+
+
+@pytest.mark.asyncio
+async def test_create_invitation_reports_insufficient_privileges():
+    """TC8/AC6: Graph's 403 (token lacks User.Invite.All) must surface as
+    this connector's standard unauthorized envelope."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import invitations
+
+    client = _FailingPostClient(403)
+    mcp = FastMCP(name="test")
+    invitations.register(mcp, lambda: client)
+
+    result = json.loads(
+        (await mcp.call_tool("graph_create_invitation", _INVITE_BASE_ARGS))[0][0].text
+    )
+
+    assert result["error"]["code"] == "unauthorized"
+    assert result["error"]["retryable"] is False
+
+
+@pytest.mark.asyncio
+async def test_create_invitation_reports_invalid_argument():
+    """TC9/AC6: Graph's 400 (malformed email/redirect URL) must surface as
+    invalid_argument, same mapping every other tool already gets from
+    api_client._classify."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import invitations
+
+    client = _FailingPostClient(400)
+    mcp = FastMCP(name="test")
+    invitations.register(mcp, lambda: client)
+
+    result = json.loads(
+        (await mcp.call_tool("graph_create_invitation", _INVITE_BASE_ARGS))[0][0].text
+    )
+
+    assert result["error"]["code"] == "invalid_argument"
+    assert result["error"]["retryable"] is False
+
+
+@pytest.mark.asyncio
+async def test_create_invitation_returns_plain_object_id_for_chaining():
+    """TC10/AC7: the returned invited_user_id must be the exact, unwrapped
+    GUID string graph_assign_groups's user_id parameter expects -- no
+    prefix, no wrapping, no extra lookup needed to chain the two tools."""
+    from graph_mcp.tools import invitations
+
+    guid = "11111111-2222-3333-4444-555555555555"
+    mcp, client = _register(
+        invitations, result={**_INVITE_GRAPH_RESPONSE, "invitedUser": {"id": guid}}
+    )
+    result = json.loads(
+        (await mcp.call_tool("graph_create_invitation", _INVITE_BASE_ARGS))[0][0].text
+    )
+
+    assert result["invited_user_id"] == guid
+
+
+@pytest.mark.asyncio
+async def test_create_invitation_does_not_special_case_existing_guest():
+    """TC11/AC8: whatever Graph returns for an already-invited guest (e.g.
+    a status other than PendingAcceptance) is passed straight through the
+    tool's normal curated-field mapping -- no duplicate-detection branch."""
+    from graph_mcp.tools import invitations
+
+    mcp, client = _register(
+        invitations,
+        result={**_INVITE_GRAPH_RESPONSE, "status": "Accepted"},
+    )
+    result = json.loads(
+        (await mcp.call_tool("graph_create_invitation", _INVITE_BASE_ARGS))[0][0].text
+    )
+
+    assert client.calls[0][0] == "/invitations"
+    assert result["status"] == "Accepted"
+    assert result["invited_user_id"] == "cbb896f9-8306-49d0-b56b-b8e39cd28825"
+
+
+@pytest.mark.asyncio
+async def test_create_invitation_unauthorized_token_hits_backend():
+    """TC12/AC9: this connector has no UI gate -- a token lacking
+    User.Invite.All only ever gets rejected by the real POST /invitations
+    call path itself, surfaced as unauthorized."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import invitations
+
+    client = _FailingPostClient(403)
+    mcp = FastMCP(name="test")
+    invitations.register(mcp, lambda: client)
+
+    result = json.loads(
+        (await mcp.call_tool("graph_create_invitation", _INVITE_BASE_ARGS))[0][0].text
+    )
+
+    assert client.calls == [("POST", "/invitations")]
+    assert result["error"]["code"] == "unauthorized"

@@ -118,6 +118,7 @@ def create_mcp_server(settings: Settings) -> FastMCP:
         domains,
         gdap_roles,
         groups,
+        invitations,
         licenses,
         mail,
         offboarding,
@@ -135,5 +136,6 @@ def create_mcp_server(settings: Settings) -> FastMCP:
     calendar.register(mcp, client_factory)
     offboarding.register(mcp, client_factory)
     gdap_roles.register(mcp, client_factory)
+    invitations.register(mcp, client_factory)
 
     return mcp
