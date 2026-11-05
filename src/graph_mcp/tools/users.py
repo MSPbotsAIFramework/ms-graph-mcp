@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
@@ -842,6 +842,55 @@ def register(mcp: FastMCP, client_factory: Callable[[], GraphClient | None]) -> 
             return dump_json_capped({"user_id": user_id, "count": len(methods), "methods": methods})
         except GraphError as e:
             return e.to_envelope()
+
+    @mcp.tool(
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True)
+    )
+    async def graph_delete_auth_method(
+        user_id: Annotated[str, Field(description="Target user's id (GUID) or userPrincipalName.")],
+        method_type: Annotated[
+            Literal[
+                "microsoftAuthenticatorMethods",
+                "phoneMethods",
+                "emailMethods",
+                "fido2Methods",
+                "softwareOathMethods",
+                "windowsHelloForBusinessMethods",
+            ],
+            Field(description="Which Graph authentication-method collection method_id belongs to."),
+        ],
+        method_id: Annotated[
+            str,
+            Field(
+                description="The method's id, from graph_list_auth_methods — never guess this, "
+                "resolve it first."
+            ),
+        ],
+    ) -> str:
+        """Delete one of a user's registered MFA authentication methods.
+
+        Used to reset MFA: pair with graph_list_auth_methods, which returns
+        each method's id and method_type. This call is irreversible — the
+        user must re-register the method afterwards. Idempotent: deleting an
+        already-gone method_id returns deleted=true, not an error.
+        """
+        client = client_factory()
+        if client is None:
+            return NO_TOKEN
+
+        try:
+            await client.delete(f"/users/{user_id}/authentication/{method_type}/{method_id}")
+        except GraphError as e:
+            if e.status_code != 404:
+                return e.to_envelope()
+        return dump_json_capped(
+            {
+                "user_id": user_id,
+                "method_type": method_type,
+                "method_id": method_id,
+                "deleted": True,
+            }
+        )
 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True))
     async def graph_list_user_roles(
