@@ -135,13 +135,12 @@ def register(mcp: FastMCP, client_factory: Callable[[], GraphClient | None]) -> 
     ) -> str:
         """List groups a user directly belongs to, one page at a time.
 
-        Use to mirror memberships onto a new hire, or to route a group
-        through Graph, Exchange or AD during offboarding — each entry
-        includes groupTypes, mailEnabled, isAssignableToRole (true for groups
-        that can carry administrator roles; null for ordinary groups,
-        PRD-21676) and sync_source ("on-premises" for AD-synced groups, else
-        "cloud"). has_more=true: call again with next_page_token (one Graph
-        page per call — PRD-20393).
+        Mirrors memberships onto a new hire, or routes offboarding through
+        Graph/Exchange/AD. Each entry has groupTypes, mailEnabled,
+        isAssignableToRole (true if it can carry admin roles; null for
+        ordinary groups) and sync_source ("on-premises" or "cloud").
+        has_more=true: call again with next_page_token (one Graph page per
+        call).
         """
         client = client_factory()
         if client is None:

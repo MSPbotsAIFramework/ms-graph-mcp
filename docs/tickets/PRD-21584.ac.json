@@ -1,0 +1,180 @@
+[
+  {
+    "id": "TC1",
+    "ac": "AC1",
+    "text": "Given valid required-only arguments (invited_user_email_address, invite_redirect_url), when graph_create_invitation is called, then POST /invitations is issued with invitedUserEmailAddress/inviteRedirectUrl/sendInvitationMessage=true and the tool returns invited_user_id, invite_redeem_url, and status sourced from Graph's response",
+    "type": "auto",
+    "tests": [
+      "tests/test_tools.py::test_create_invitation_happy_path_required_fields_only"
+    ],
+    "priority": "high",
+    "notes": "Model after users.py's graph_create_user / graph_create_tap pattern.",
+    "result": "pass",
+    "evidence": "pytest tests/test_tools.py::test_create_invitation_happy_path_required_fields_only PASSED (uv run pytest -v -k create_invitation @ decd29b); asserts POST /invitations body has invitedUserEmailAddress/inviteRedirectUrl/sendInvitationMessage=true and the curated response fields."
+  },
+  {
+    "id": "TC2",
+    "ac": "AC2",
+    "text": "Given send_invitation_message=False, when the tool is called, then the request body carries sendInvitationMessage=false",
+    "type": "auto",
+    "tests": [
+      "tests/test_tools.py::test_create_invitation_send_invitation_message_false"
+    ],
+    "priority": "high",
+    "result": "pass",
+    "evidence": "pytest tests/test_tools.py::test_create_invitation_send_invitation_message_false PASSED @ decd29b; asserts body['sendInvitationMessage'] is False."
+  },
+  {
+    "id": "TC3",
+    "ac": "AC2",
+    "text": "Given send_invitation_message is omitted, when the tool is called, then the request body carries sendInvitationMessage=true (the default)",
+    "type": "auto",
+    "tests": [
+      "tests/test_tools.py::test_create_invitation_send_invitation_message_defaults_true"
+    ],
+    "priority": "medium",
+    "result": "pass",
+    "evidence": "pytest tests/test_tools.py::test_create_invitation_send_invitation_message_defaults_true PASSED @ decd29b; asserts body['sendInvitationMessage'] is True when omitted."
+  },
+  {
+    "id": "TC4",
+    "ac": "AC3",
+    "text": "Given invited_user_display_name is supplied, when the tool is called, then the request body carries invitedUserDisplayName with that value",
+    "type": "auto",
+    "tests": [
+      "tests/test_tools.py::test_create_invitation_forwards_display_name"
+    ],
+    "priority": "medium",
+    "result": "pass",
+    "evidence": "pytest tests/test_tools.py::test_create_invitation_forwards_display_name PASSED @ decd29b; asserts body['invitedUserDisplayName'] == 'Alice Smith'."
+  },
+  {
+    "id": "TC5",
+    "ac": "AC4",
+    "text": "Given message_language, customized_message_body, and cc_recipients are all supplied, when the tool is called, then the request body carries invitedUserMessageInfo with messageLanguage, customizedMessageBody, and ccRecipients built from the email list, each shaped as {\"emailAddress\": {\"address\": ...}}",
+    "type": "auto",
+    "tests": [
+      "tests/test_tools.py::test_create_invitation_builds_invited_user_message_info"
+    ],
+    "priority": "high",
+    "result": "pass",
+    "evidence": "pytest tests/test_tools.py::test_create_invitation_builds_invited_user_message_info PASSED @ decd29b; asserts invitedUserMessageInfo.messageLanguage/customizedMessageBody/ccRecipients shaped correctly."
+  },
+  {
+    "id": "TC6",
+    "ac": "AC4",
+    "text": "Given none of message_language/customized_message_body/cc_recipients are supplied, when the tool is called, then the request body has no invitedUserMessageInfo key at all (not an empty object)",
+    "type": "auto",
+    "tests": [
+      "tests/test_tools.py::test_create_invitation_omits_empty_invited_user_message_info"
+    ],
+    "priority": "medium",
+    "result": "pass",
+    "evidence": "pytest tests/test_tools.py::test_create_invitation_omits_empty_invited_user_message_info PASSED @ decd29b; asserts 'invitedUserMessageInfo' not in body when all three fields are omitted."
+  },
+  {
+    "id": "TC7",
+    "ac": "AC5",
+    "text": "The registered tool schema for graph_create_invitation requires exactly invited_user_email_address and invite_redirect_url",
+    "type": "auto",
+    "tests": [
+      "tests/test_tools.py::test_tools_list_snapshot"
+    ],
+    "priority": "high",
+    "notes": "Covered by adding \"graph_create_invitation\": {\"invited_user_email_address\", \"invite_redirect_url\"} to EXPECTED_TOOLS (tests/test_tools.py:17-69).",
+    "result": "pass",
+    "evidence": "pytest tests/test_tools.py::test_tools_list_snapshot's per-tool loop would assert required == {'invited_user_email_address','invite_redirect_url'} for graph_create_invitation, but that loop stops earlier on the pre-existing, unrelated graph_list_user_groups description-length failure (baseline-red on pristine origin/master @ 080f4ef too, see TC13 evidence). Verified independently: `uv run python -c \"...create_mcp_server(Settings()); required == {'invited_user_email_address','invite_redirect_url'}\"` -> True, readOnlyHint=False, description len=327, first line len=63, no 'API:' leak. EXPECTED_TOOLS entry added at tests/test_tools.py (graph_create_invitation)."
+  },
+  {
+    "id": "TC8",
+    "ac": "AC6",
+    "text": "Given Graph returns 403 Insufficient privileges, when the tool is called, then the result is {\"error\":{\"code\":\"unauthorized\",\"retryable\":false,...}} via the connector's existing GraphError/_classify mapping",
+    "type": "auto",
+    "tests": [
+      "tests/test_tools.py::test_create_invitation_reports_insufficient_privileges"
+    ],
+    "priority": "high",
+    "result": "pass",
+    "evidence": "pytest tests/test_tools.py::test_create_invitation_reports_insufficient_privileges PASSED @ decd29b; _FailingPostClient(403) -> {'error':{'code':'unauthorized','retryable':False}}."
+  },
+  {
+    "id": "TC9",
+    "ac": "AC6",
+    "text": "Given Graph returns 400 Bad Request (malformed invitedUserEmailAddress), when the tool is called, then the result is {\"error\":{\"code\":\"invalid_argument\",\"retryable\":false,...}}",
+    "type": "auto",
+    "tests": [
+      "tests/test_tools.py::test_create_invitation_reports_invalid_argument"
+    ],
+    "priority": "high",
+    "result": "pass",
+    "evidence": "pytest tests/test_tools.py::test_create_invitation_reports_invalid_argument PASSED @ decd29b; _FailingPostClient(400) -> {'error':{'code':'invalid_argument','retryable':False}}."
+  },
+  {
+    "id": "TC10",
+    "ac": "AC7",
+    "text": "Given a fake Graph response whose invitedUser.id is some GUID, when the tool is called, then the tool's invited_user_id output equals that same GUID string unchanged -- the exact shape graph_assign_groups's user_id parameter expects, with no added prefix/wrapping",
+    "type": "auto",
+    "tests": [
+      "tests/test_tools.py::test_create_invitation_returns_plain_object_id_for_chaining"
+    ],
+    "priority": "high",
+    "notes": "This is the ticket's actual end-to-end ask: invite then graph_assign_groups with no extra lookup, matching Rewst's invite_result -> add_group_member flow.",
+    "result": "pass",
+    "evidence": "pytest tests/test_tools.py::test_create_invitation_returns_plain_object_id_for_chaining PASSED @ decd29b; asserts invited_user_id equals the fake invitedUser.id GUID unchanged."
+  },
+  {
+    "id": "TC11",
+    "ac": "AC8",
+    "text": "Given a fake Graph response representing an existing-guest scenario (e.g. status other than PendingAcceptance), when the tool is called, then it passes the response straight through its normal curated-field mapping with no special-case branching",
+    "type": "auto",
+    "tests": [
+      "tests/test_tools.py::test_create_invitation_does_not_special_case_existing_guest"
+    ],
+    "priority": "medium",
+    "result": "pass",
+    "evidence": "pytest tests/test_tools.py::test_create_invitation_does_not_special_case_existing_guest PASSED @ decd29b; fake response with status='Accepted' passes straight through with no special-casing."
+  },
+  {
+    "id": "TC12",
+    "ac": "AC9",
+    "text": "Given a token lacking User.Invite.All, when the tool is called against a fake client returning 403, then the result is unauthorized -- this connector's only gate is the real backend POST /invitations call, there is no UI menu-gating layer to fool",
+    "type": "auto",
+    "tests": [
+      "tests/test_tools.py::test_create_invitation_unauthorized_token_hits_backend"
+    ],
+    "priority": "high",
+    "notes": "Permission/multi-tenant anchor (S6 quality line), kept distinct from TC8 so AC9 has its own traceable case.",
+    "result": "pass",
+    "evidence": "pytest tests/test_tools.py::test_create_invitation_unauthorized_token_hits_backend PASSED @ decd29b; confirms the only call made is POST /invitations and the 403 surfaces as unauthorized -- no UI gate exists in this connector."
+  },
+  {
+    "id": "TC13",
+    "ac": "AC6",
+    "text": "After the change, the repo's own three-way consistency test passes with the new tool present and consistent across the live tools/list registry, docs/gdap-role-map.yaml, and the README Tools table, and the hard-coded role-map count assertion is bumped from 45 to 46",
+    "type": "auto",
+    "tests": [
+      "tests/test_gdap_role_map.py::test_gdap_role_map_matches_registered_tools_and_readme"
+    ],
+    "priority": "high",
+    "notes": "Existing test; passes automatically once EXPECTED_TOOLS, the yaml entry, the README row, and server registration are all added consistently. Also bump tests/test_gdap_role_map.py:79's assert len(role_map) == 45 to 46.",
+    "result": "pass",
+    "evidence": "pytest tests/test_gdap_role_map.py -v: all 4 tests PASSED @ decd29b (test_gdap_role_map_matches_registered_tools_and_readme, test_every_role_map_entry_has_a_non_empty_note, test_consistency_check_catches_an_unmapped_tool, test_graph_list_gdap_roles_is_static_and_byte_identical). Role-map count assertion bumped to 50 (not 46 as drafted at design time): 4 other tools (graph_list_named_locations/graph_delete_message/graph_list_applications/graph_service_principal_create_and_add_password, PRD-21580/21578/21582/21618) merged into master ahead of this branch -- see Handoff for the merge-conflict resolution."
+  },
+  {
+    "id": "TC14",
+    "ac": "AC1",
+    "text": "End-to-end against a real Entra tenant: invite a real external email address, confirm a guest user (userType: Guest) is created, confirm the invitation email arrives when send_invitation_message=true, and the inviteRedeemUrl opens Microsoft's redemption page",
+    "type": "manual",
+    "steps": [
+      "Obtain a real Graph access token with User.Invite.All for a test tenant",
+      "Call graph_create_invitation with a real external test email address and a real inviteRedirectUrl",
+      "Check the Entra admin center for a new guest user with userType=Guest and the expected email",
+      "If send_invitation_message=true, check the external mailbox for the invitation email",
+      "Open the returned invite_redeem_url and confirm it reaches Microsoft's redemption page"
+    ],
+    "expect": "A guest user is created in the tenant, the invitation email is received when requested, and the redemption URL is valid",
+    "priority": "low",
+    "result": "blocked",
+    "notes": "No real vendor/tenant test account is available to the design or dev leg. Per mcp-track.md S3, missing a vendor test account does not block shipping; record a Known Gaps README bullet instead, same convention as this connector's other real-tenant-pending tools (graph_start_cloud_sync, the calendar tools)."
+  }
+]
