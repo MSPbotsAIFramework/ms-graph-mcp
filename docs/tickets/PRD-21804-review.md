@@ -20,7 +20,7 @@ Verdict: changes requested
 - `docs/tickets/PRD-21804.ac.json` validates (`ticket_store.py validate`: "ledger OK: 6 cases").
 - No credential/header/shared-state changes; not applicable to this diff.
 
-## Round 2 · 2026-11-05 · reviewed dev/PRD-21804 @ 6602bae (base 7c30fb2)
+## Round 2 · 2026-11-05 · reviewed 6602bae (base 7c30fb2)
 
 Verdict: approved
 
