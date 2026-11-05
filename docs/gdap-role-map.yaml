@@ -46,6 +46,11 @@ graph_list_auth_methods:
   roles:
   - Authentication Administrator
   note: 'Read-only: lists the user''s MFA methods.'
+graph_delete_auth_method:
+  roles:
+  - Authentication Administrator
+  - Privileged Authentication Administrator
+  note: Any of; deletes one of the user's registered MFA methods (MFA reset).
 graph_create_tap:
   roles:
   - Authentication Administrator
@@ -197,6 +202,13 @@ graph_list_gdap_roles:
   note: 'Meta tool: serves this file''s own contents (PRD-21193); not itself a client-tenant
     action, so it carries no role of its own -- included here so the registered-tools/yaml/README
     three-way consistency check (AC7) has no silent exception.'
+graph_list_conditional_access_policies:
+  roles:
+  - Security Reader
+  - Conditional Access Administrator
+  - Security Administrator
+  note: 'Any of; read-only. Security Reader is the least-privileged Entra role
+    Microsoft documents as sufficient to view Conditional Access policies.'
 graph_list_named_locations:
   roles:
   - Security Reader
@@ -224,3 +236,10 @@ graph_create_invitation:
     permission per Microsoft''s docs; Guest Inviter is the purpose-built least-privileged
     role, not yet confirmed against a real GDAP relationship -- see PRD-21584 Open
     Questions.'
+graph_get_security_defaults_policy:
+  roles:
+  - Security Reader
+  note: 'Read-only: reads whether the tenant''s Security Defaults policy is enabled.
+    Security Reader is Microsoft''s least-privileged role for reading tenant security
+    configuration; not yet confirmed against Microsoft''s GDAP task-to-role table or
+    a real tenant -- see PRD-21581 Open Questions.'
