@@ -185,5 +185,68 @@
       "tests/test_tools.py::test_get_user_default_select_includes_all_four_audit_fields_r4",
       "tests/test_tools.py::test_get_user_default_select_includes_onprem_and_audit_fields"
     ]
+  },
+  {
+    "id": "TC21",
+    "ac": "R5-AC1",
+    "text": "Given a gdap-mcp ms-graph-gdap_graph_remove_manager call for a user with no manager assigned, When the tool runs, Then it returns {user_id, removed: false, previous_manager: null, reason: \"no_manager\"} with no error, and never a bare {\"status\": \"removed\"|\"no_manager\"} shape -- closes comment 1600390000046979's COV1 (requirement: comment 1600390000029562 point 1, acceptance in comment 1600390000029419)",
+    "type": "auto",
+    "tests": [
+      "tests/test_flows.py::test_remove_manager_returns_no_manager_without_deleting"
+    ]
+  },
+  {
+    "id": "TC22",
+    "ac": "R5-AC1",
+    "text": "Given a gdap-mcp ms-graph-gdap_graph_remove_manager call for a user with an assigned manager, When the tool runs, Then it returns {user_id, removed: true, previous_manager: {id, display_name, user_principal_name}}, and a subsequent read of the user's manager shows none -- closes comment 1600390000046979's COV2 (requirement: comment 1600390000029562 point 2, acceptance in comment 1600390000029419)",
+    "type": "auto",
+    "tests": [
+      "tests/test_flows.py::test_remove_manager_removes_and_returns_previous_manager"
+    ]
+  },
+  {
+    "id": "TC23",
+    "ac": "R5-AC1",
+    "text": "Given a gdap-mcp ms-graph-gdap_graph_remove_manager call for a user_id that does not resolve to any user, When the tool runs, Then it returns a not_found error envelope, never a no_manager result -- regression guard porting ms-graph-mcp round 3's existence-disambiguation fix (src/graph_mcp/tools/users.py:770-778 at ms-graph-mcp@master) to gdap-mcp for the first time, since this round reuses that reference behaviour verbatim (comment 1600390000029562: \"Use the ms-graph-mcp behaviour that QA validated on 2026-10-16 as the reference\")",
+    "type": "auto",
+    "tests": [
+      "tests/test_flows.py::test_remove_manager_nonexistent_user_is_not_found"
+    ]
+  },
+  {
+    "id": "TC24",
+    "ac": "R5-AC2",
+    "text": "Given a gdap-mcp ms-graph-gdap_graph_get_user call with no select param, When the tool builds its request, Then the default $select includes onPremisesImmutableId, onPremisesSamAccountName, createdDateTime, and lastPasswordChangeDateTime alongside the rest of the default profile -- closes comment 1600390000046979's COV3 (requirement: comment 1600390000029562 point 3, acceptance in comment 1600390000029419)",
+    "type": "auto",
+    "tests": [
+      "tests/test_flows.py::test_get_user_default_select_includes_onprem_and_audit_fields"
+    ]
+  },
+  {
+    "id": "TC25",
+    "ac": "R5-AC3",
+    "text": "Given a gdap-mcp ms-graph-gdap_graph_get_user call with no select (the default profile, which always expands manager) and the resolved user has no manager, When the Graph response has no manager key, Then the tool's returned JSON contains \"manager\": null, not an omitted key -- same contract as ms-graph-mcp round 4 (R4-AC1/TC16), ported to gdap-mcp",
+    "type": "auto",
+    "tests": [
+      "tests/test_flows.py::test_get_user_manager_requested_but_absent_returns_null"
+    ]
+  },
+  {
+    "id": "TC26",
+    "ac": "R5-AC3",
+    "text": "Given a gdap-mcp ms-graph-gdap_graph_get_user call with select=[\"proxyAddresses\",\"manager\"] and the resolved user has no manager, When the tool runs, Then it returns {id, proxyAddresses, manager: null} -- closes comment 1600390000046979's COV4 (requirement: comment 1600390000029562 point 4, acceptance in comment 1600390000029419)",
+    "type": "auto",
+    "tests": [
+      "tests/test_flows.py::test_get_user_select_with_manager_absent_returns_null"
+    ]
+  },
+  {
+    "id": "TC27",
+    "ac": "R5-AC3",
+    "text": "Given a gdap-mcp ms-graph-gdap_graph_get_user call requesting manager (default call or select including \"manager\") and the resolved user does have a manager, When the tool returns, Then the manager object is the full expanded {id, displayName, userPrincipalName} unchanged -- regression guard that the null-injection never overwrites a real value, mirrors ms-graph-mcp round 4's TC18",
+    "type": "auto",
+    "tests": [
+      "tests/test_flows.py::test_get_user_manager_present_unaffected_by_null_injection"
+    ]
   }
 ]
