@@ -1,11 +1,30 @@
 from urllib.parse import parse_qs, urlsplit
 
 from .._json import error_envelope
-from ..api_client import GraphClient
+from ..api_client import GraphClient, GraphError
 
 NO_TOKEN = error_envelope(
     "not_configured", "No Graph access token. Send the X-Ms-Graph-Token header.", False
 )
+
+
+def missing_scope_error(e: GraphError, scope: str) -> str:
+    """Turn a 403 into an error that names the Graph permission this tool
+    needs, instead of Graph's generic "Insufficient privileges" message
+    (PRD-22034 Done-when 4). Every other status code keeps today's
+    behavior (e.to_envelope()) -- this only changes what a tenant without
+    consent for `scope` sees.
+    """
+    if e.status_code == 403:
+        return error_envelope(
+            "missing_scope",
+            f"This tool needs the Microsoft Graph permission {scope}. "
+            f"An admin must grant consent for {scope} on the Microsoft Graph "
+            f"connector, then retry.",
+            False,
+            extra={"missing_scope": scope},
+        )
+    return e.to_envelope()
 
 
 def odata_quote(value: str) -> str:

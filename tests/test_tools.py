@@ -74,6 +74,9 @@ EXPECTED_TOOLS = {
     "graph_service_principal_create_and_add_password": {"app_id"},
     "graph_get_security_defaults_policy": set(),
     "graph_create_invitation": {"invited_user_email_address", "invite_redirect_url"},
+    "graph_list_teams": set(),
+    "graph_list_channels": {"team_id"},
+    "graph_get_channel": {"team_id", "channel_id"},
 }
 
 # Tools that are not plain read-only queries (writes / mutations).
@@ -219,7 +222,16 @@ async def test_tools_list_snapshot():
     # existing user id (there is no user yet) and no tool here reaches
     # POST /invitations; it is a distinct Graph resource family, not a mode
     # flag on graph_create_user or graph_assign_groups.
-    assert len(names) <= 53, "tool count should stay within SOP's <=20 guideline (+33 justified)"
+    # +3 for the Teams discovery set (PRD-22034): no existing tool reads
+    # /teams, /users/{id}/joinedTeams or /teams/{id}/channels[/{id}]. The
+    # three are kept as separate tools rather than one multiplexed
+    # "team_or_channel" tool because each wraps a single Graph endpoint
+    # with its own filter/paging shape (graph_list_teams paginates,
+    # graph_list_channels takes a membership_type enum filter,
+    # graph_get_channel takes no filter) -- collapsing them would need an
+    # internal mode flag the calling agent can't see, the same rejection
+    # reasoning as the calendar/mail notes above.
+    assert len(names) <= 56, "tool count should stay within SOP's <=20 guideline (+36 justified)"
 
     by_name = {t.name: t for t in tools}
     # Collect every violation instead of asserting per-tool inside the loop
@@ -5372,3 +5384,221 @@ async def test_create_invitation_unauthorized_token_hits_backend():
 
     assert client.calls == [("POST", "/invitations")]
     assert result["error"]["code"] == "unauthorized"
+
+
+# --- PRD-22034: graph_list_teams / graph_list_channels / graph_get_channel --
+
+
+class _ForbiddenGetClient:
+    """GET always raises a 403 -- stands in for a tenant that has not
+    consented to the Graph scope a Teams tool needs."""
+
+    async def get(self, path: str, params=None, extra_headers=None):
+        raise GraphError(403, "Authorization_RequestDenied: Insufficient privileges")
+
+
+@pytest.mark.asyncio
+async def test_list_teams_paginates_with_skiptoken():
+    """TC-TEAMS-001/AC1: graph_list_teams follows the same one-page-per-call
+    pagination contract as graph_list_groups -- has_more=true carries the
+    $skiptoken extracted from @odata.nextLink."""
+    from graph_mcp.tools import teams
+
+    mcp, client = _register(teams)
+    client._result = {
+        "value": [{"id": "t1", "displayName": "Mainstream SOP"}],
+        "@odata.nextLink": "https://graph.microsoft.com/v1.0/teams?$skiptoken=P1",
+    }
+    first = json.loads((await mcp.call_tool("graph_list_teams", {}))[0][0].text)
+    assert first["has_more"] is True
+    assert first["next_page_token"] == "P1"
+
+    client._result = {"value": [{"id": "t2", "displayName": "Other Team"}]}
+    second = json.loads(
+        (await mcp.call_tool("graph_list_teams", {"page_token": "P1"}))[0][0].text
+    )
+    assert second["has_more"] is False
+    assert second["next_page_token"] is None
+    assert client.calls[1][1]["$skiptoken"] == "P1"
+
+
+@pytest.mark.asyncio
+async def test_list_teams_last_page_has_no_next_token():
+    """TC-TEAMS-002/AC1: a fake final page (no @odata.nextLink) must report
+    has_more=false, next_page_token=null -- not an absent key."""
+    from graph_mcp.tools import teams
+
+    mcp, client = _register(teams, result={"value": [{"id": "t1"}]})
+    result = json.loads((await mcp.call_tool("graph_list_teams", {}))[0][0].text)
+    assert result["has_more"] is False
+    assert result["next_page_token"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_channel_missing_email_is_explicit_empty_string():
+    """TC-TEAMS-008/AC7: a fake Graph payload with no `email` key must come
+    back as email="" -- never a missing key, never null, never a tool
+    failure (PRD-22034 Done-when 3)."""
+    from graph_mcp.tools import teams
+
+    mcp, client = _register(
+        teams,
+        result={
+            "id": "c1",
+            "displayName": "General",
+            "membershipType": "standard",
+            "webUrl": "https://teams.microsoft.com/l/channel/c1",
+            "isArchived": False,
+        },
+    )
+    result = json.loads(
+        (await mcp.call_tool("graph_get_channel", {"team_id": "t1", "channel_id": "c1"}))[0][
+            0
+        ].text
+    )
+    assert result["email"] == ""
+    assert "email" in result
+
+
+@pytest.mark.asyncio
+async def test_get_channel_passes_through_a_configured_email_unchanged():
+    """TC-TEAMS-006/AC6 (unit half): a fake payload with a configured email
+    passes through unchanged, not re-derived or normalized."""
+    from graph_mcp.tools import teams
+
+    mcp, client = _register(
+        teams,
+        result={
+            "id": "c1",
+            "displayName": "General",
+            "membershipType": "standard",
+            "webUrl": "https://teams.microsoft.com/l/channel/c1",
+            "isArchived": False,
+            "email": "general.team@contoso.com",
+        },
+    )
+    result = json.loads(
+        (await mcp.call_tool("graph_get_channel", {"team_id": "t1", "channel_id": "c1"}))[0][
+            0
+        ].text
+    )
+    assert result["email"] == "general.team@contoso.com"
+
+
+@pytest.mark.asyncio
+async def test_list_teams_names_missing_scope_on_403():
+    """TC-TEAMS-009/AC8: a 403 (tenant has not consented) must come back as
+    a structured error naming Team.ReadBasic.All, not Graph's generic
+    message alone."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import teams
+
+    mcp = FastMCP(name="test")
+    teams.register(mcp, lambda: _ForbiddenGetClient())
+
+    result = json.loads((await mcp.call_tool("graph_list_teams", {}))[0][0].text)
+    assert result["error"]["code"] == "missing_scope"
+    assert result["error"]["retryable"] is False
+    assert result["error"]["missing_scope"] == "Team.ReadBasic.All"
+    assert "Team.ReadBasic.All" in result["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_list_channels_names_missing_scope_on_403():
+    """TC-TEAMS-010/AC8: same as graph_list_teams, naming
+    Channel.ReadBasic.All for graph_list_channels."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import teams
+
+    mcp = FastMCP(name="test")
+    teams.register(mcp, lambda: _ForbiddenGetClient())
+
+    result = json.loads(
+        (await mcp.call_tool("graph_list_channels", {"team_id": "t1"}))[0][0].text
+    )
+    assert result["error"]["code"] == "missing_scope"
+    assert result["error"]["retryable"] is False
+    assert result["error"]["missing_scope"] == "Channel.ReadBasic.All"
+    assert "Channel.ReadBasic.All" in result["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_get_channel_names_missing_scope_on_403():
+    """TC-TEAMS-011/AC8: same as graph_list_teams, naming
+    Channel.ReadBasic.All for graph_get_channel (escalates to
+    ChannelSettings.Read.All only if a real tenant shows email needs it,
+    see Open Questions)."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import teams
+
+    mcp = FastMCP(name="test")
+    teams.register(mcp, lambda: _ForbiddenGetClient())
+
+    result = json.loads(
+        (
+            await mcp.call_tool("graph_get_channel", {"team_id": "t1", "channel_id": "c1"})
+        )[0][0].text
+    )
+    assert result["error"]["code"] == "missing_scope"
+    assert result["error"]["retryable"] is False
+    assert result["error"]["missing_scope"] == "Channel.ReadBasic.All"
+
+
+@pytest.mark.asyncio
+async def test_list_channels_filters_by_membership_type():
+    """AC5 (unit half): membership_type is sent as an OData $filter; the
+    real "only that type comes back" behavior is exercised manually on INT
+    (TC-TEAMS-006) since this fake client does not emulate Graph's own
+    filtering."""
+    from graph_mcp.tools import teams
+
+    mcp, client = _register(teams, result={"value": [{"id": "c1", "membershipType": "private"}]})
+    await mcp.call_tool("graph_list_channels", {"team_id": "t1", "membership_type": "private"})
+    assert client.calls[0][0] == "/teams/t1/channels"
+    assert client.calls[0][1]["$filter"] == "membershipType eq 'private'"
+
+
+@pytest.mark.asyncio
+async def test_list_teams_by_user_id_applies_name_prefix_client_side():
+    """AC3 (unit half): when user_id and name_prefix are both given, the
+    prefix filter is applied client-side on the /joinedTeams page, since
+    that endpoint has no server-side display-name filter (Tech design)."""
+    from graph_mcp.tools import teams
+
+    mcp, client = _register(
+        teams,
+        result={
+            "value": [
+                {"id": "t1", "displayName": "Mainstream SOP"},
+                {"id": "t2", "displayName": "Other Team"},
+            ]
+        },
+    )
+    result = json.loads(
+        (
+            await mcp.call_tool(
+                "graph_list_teams", {"user_id": "u1", "name_prefix": "Mainstream"}
+            )
+        )[0][0].text
+    )
+    assert client.calls[0][0] == "/users/u1/joinedTeams"
+    assert [t["id"] for t in result["teams"]] == ["t1"]
+
+
+@pytest.mark.asyncio
+async def test_list_teams_returns_no_token_without_client():
+    """Defensive branch: client_factory() resolving to None (no per-request
+    Graph client) must return the connector's standard NO_TOKEN envelope,
+    matching every other tool's behavior."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import teams
+
+    mcp = FastMCP(name="test")
+    teams.register(mcp, lambda: None)
+
+    result = json.loads((await mcp.call_tool("graph_list_teams", {}))[0][0].text)
+    assert result["error"]["code"] == "not_configured"

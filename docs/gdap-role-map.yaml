@@ -243,3 +243,23 @@ graph_get_security_defaults_policy:
     Security Reader is Microsoft''s least-privileged role for reading tenant security
     configuration; not yet confirmed against Microsoft''s GDAP task-to-role table or
     a real tenant -- see PRD-21581 Open Questions.'
+graph_list_teams:
+  roles:
+  - Teams Administrator
+  note: 'Read-only: finds a team by displayName prefix or by a user''s joined
+    teams. Teams Administrator is the closest built-in Entra/GDAP role for
+    Teams read access; not yet confirmed against a real tenant -- see
+    PRD-22034 Open Questions. If a real tenant shows a different role is
+    required, that is a documentation-only fix.'
+graph_list_channels:
+  roles:
+  - Teams Administrator
+  note: 'Read-only: lists a team''s channels, optionally filtered by
+    membershipType. Role assumed per graph_list_teams''s note above -- see
+    PRD-22034 Open Questions.'
+graph_get_channel:
+  roles:
+  - Teams Administrator
+  note: 'Read-only: reads one channel''s details including an explicit-empty
+    email value. Role assumed per graph_list_teams''s note above -- see
+    PRD-22034 Open Questions.'
