@@ -77,19 +77,17 @@ def create_mcp_server(settings: Settings) -> FastMCP:
         name="graph-mcp",
         instructions=(
             "Microsoft Graph is the API for Entra ID and "
-            "Microsoft 365 data. It exposes 9 tool domains modeling "
+            "Microsoft 365 data. It exposes 10 tool domains modeling "
             "the identity lifecycle: users (search the directory, "
             "create/read/update accounts, "
             "reset passwords, list MFA methods, assign managers, revoke sessions), "
             "groups (search/list groups, manage a user's memberships and owned "
             "groups), licenses (check tenant SKU stock and assign/remove SKUs on a "
-            "user — usage_location must be set first), domains and conditional "
-            "access policies, mail (triage a mailbox with "
-            "graph_list_messages -> graph_get_message, and send as the signed-in "
-            "user), sites (read/write SharePoint "
-            "document libraries: graph_search_sites -> graph_list_drive_items -> "
-            "graph_read_file_text for small text files; graph_get_file for "
-            "larger/binary), devices (list/remove a user's Intune-enrolled "
+            "user — usage_location must be set first), domains, conditional "
+            "access policies, and teams (find a team and its channels), "
+            "mail (triage and send mail as the signed-in user), "
+            "sites (read/write SharePoint document libraries), "
+            "devices (list/remove a user's Intune-enrolled "
             "devices), calendar (list events, "
             "check free/busy, create and cancel events). "
             "Typical onboarding: graph_list_domains -> graph_check_user_exists "
@@ -102,7 +100,9 @@ def create_mcp_server(settings: Settings) -> FastMCP:
             "graph_remove_group_member -> graph_transfer_onedrive -> "
             "graph_start_cloud_sync. "
             "Typical scheduling: "
-            "graph_get_user_availability -> graph_create_calendar_event. All tools "
+            "graph_get_user_availability -> graph_create_calendar_event. "
+            "Typical team discovery: graph_list_teams -> graph_list_channels -> "
+            "graph_get_channel. All tools "
             "act on the caller's own tenant via a per-request token; no "
             "cross-tenant access."
         ),
@@ -128,6 +128,7 @@ def create_mcp_server(settings: Settings) -> FastMCP:
         policies,
         service_principals,
         sites,
+        teams,
         users,
     )
 
@@ -146,5 +147,6 @@ def create_mcp_server(settings: Settings) -> FastMCP:
     conditional_access.register(mcp, client_factory)
     policies.register(mcp, client_factory)
     service_principals.register(mcp, client_factory)
+    teams.register(mcp, client_factory)
 
     return mcp
