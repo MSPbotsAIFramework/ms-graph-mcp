@@ -1,0 +1,206 @@
+[
+  {
+    "id": "TC-TEAMS-001",
+    "ac": "AC1",
+    "dw": "DW1",
+    "text": "Given more teams match name_prefix than page_size, When graph_list_teams is called, Then has_more is true and next_page_token equals the extracted $skiptoken from the fake Graph page's @odata.nextLink",
+    "type": "auto",
+    "priority": "P1",
+    "tests": ["tests/test_tools.py::test_graph_list_teams_paginates_with_skiptoken"]
+  },
+  {
+    "id": "TC-TEAMS-002",
+    "ac": "AC1",
+    "dw": "DW1",
+    "text": "Given the last page of teams (no @odata.nextLink in the fake Graph response), When graph_list_teams is called, Then has_more is false and next_page_token is null",
+    "type": "auto",
+    "priority": "P2",
+    "tests": ["tests/test_tools.py::test_graph_list_teams_last_page_has_no_next_token"]
+  },
+  {
+    "id": "TC-TEAMS-003",
+    "ac": "AC2",
+    "dw": "DW1",
+    "text": "Given a known test team's display-name prefix on the INT test tenant, When graph_list_teams(name_prefix=<prefix>) is called, Then teams[] contains that team's id and displayName",
+    "type": "manual",
+    "priority": "P0",
+    "precond": "needs a real vendor account: an MSPbots test tenant with its own Microsoft 365 tenant (per spec-check test note: e.g. the GDAP demo tenant 2qmxyw), a known test team whose displayName starts with an agreed prefix, and a valid X-Ms-Graph-Token for that tenant with Team.ReadBasic.All consented.",
+    "steps": [
+      "Obtain a Graph access token for the INT test tenant (Team.ReadBasic.All consented).",
+      "Call graph_list_teams with name_prefix set to the known test team's agreed prefix via the MCP tool (initialize -> tools/call).",
+      "Read the JSON response."
+    ],
+    "expect": "teams[] contains an entry whose id and displayName match the known test team; count >= 1.",
+    "result": "untested",
+    "evidence": ""
+  },
+  {
+    "id": "TC-TEAMS-004",
+    "ac": "AC3",
+    "dw": "DW1",
+    "text": "Given a known user_id who has joined a known test team on the INT test tenant, When graph_list_teams(user_id=<id>) is called, Then teams[] contains that team",
+    "type": "manual",
+    "priority": "P1",
+    "precond": "needs a real vendor account: same INT test tenant as TC-TEAMS-003, plus a known user's Entra object id or UPN who is a member of the known test team.",
+    "steps": [
+      "Obtain a Graph access token for the INT test tenant (Team.ReadBasic.All consented).",
+      "Call graph_list_teams with user_id set to the known test user.",
+      "Read the JSON response."
+    ],
+    "expect": "teams[] contains the known test team's id and displayName.",
+    "result": "untested",
+    "evidence": ""
+  },
+  {
+    "id": "TC-TEAMS-005",
+    "ac": "AC4",
+    "dw": "DW2",
+    "text": "Given a known team_id with a known test channel on the INT test tenant, When graph_list_channels(team_id) is called, Then channels[] contains that channel's id, membershipType and webUrl",
+    "type": "manual",
+    "priority": "P0",
+    "precond": "needs a real vendor account: same INT test tenant, the known test team's id, and a known test channel in it with Channel.ReadBasic.All consented.",
+    "steps": [
+      "Obtain a Graph access token for the INT test tenant (Channel.ReadBasic.All consented).",
+      "Call graph_list_channels with team_id set to the known test team.",
+      "Read the JSON response."
+    ],
+    "expect": "channels[] contains an entry whose id, membershipType and webUrl match the known test channel.",
+    "result": "untested",
+    "evidence": ""
+  },
+  {
+    "id": "TC-TEAMS-006",
+    "ac": "AC5",
+    "dw": "DW2",
+    "text": "Given the known test team has channels of more than one membershipType, When graph_list_channels(team_id, membership_type=\"standard\") (and \"private\" if available) is called, Then every returned channel has exactly that membershipType",
+    "type": "manual",
+    "priority": "P1",
+    "precond": "needs a real vendor account: same as TC-TEAMS-005, plus at least one non-standard (private or shared) channel in the known test team.",
+    "steps": [
+      "Call graph_list_channels(team_id=<known team>, membership_type=\"standard\"); confirm every row has membershipType standard.",
+      "Call graph_list_channels(team_id=<known team>, membership_type=\"private\") (if a private channel exists in the test team); confirm every row has membershipType private and no standard channel appears."
+    ],
+    "expect": "Each call returns only channels of the requested membershipType; no cross-type leakage.",
+    "result": "untested",
+    "evidence": ""
+  },
+  {
+    "id": "TC-TEAMS-007",
+    "ac": "AC6",
+    "dw": "DW3",
+    "text": "Given a known channel with a configured email, When graph_get_channel(team_id, channel_id) is called, Then the response includes that channel's webUrl, isArchived and a non-empty email",
+    "type": "manual",
+    "priority": "P0",
+    "precond": "needs a real vendor account: same INT test tenant, a known channel in the known test team that has an email address configured (e.g. a standard channel, which Microsoft auto-provisions an email for).",
+    "steps": [
+      "Call graph_get_channel(team_id=<known team>, channel_id=<known channel with email>).",
+      "Read the JSON response."
+    ],
+    "expect": "Response has the channel's webUrl, isArchived (boolean), and a non-empty email string.",
+    "result": "untested",
+    "evidence": ""
+  },
+  {
+    "id": "TC-TEAMS-008",
+    "ac": "AC7",
+    "dw": "DW3",
+    "text": "Given a fake Graph channel payload with no email key, When graph_get_channel processes it, Then the tool's response has email as the explicit empty string \"\" and does not fail",
+    "type": "auto",
+    "priority": "P0",
+    "tests": ["tests/test_tools.py::test_graph_get_channel_email_defaults_to_empty_string"]
+  },
+  {
+    "id": "TC-TEAMS-009",
+    "ac": "AC8",
+    "dw": "DW4",
+    "text": "Given a fake GraphClient that raises GraphError(403, ...) for /teams, When graph_list_teams is called, Then the error envelope names Team.ReadBasic.All, code is missing_scope, retryable is false",
+    "type": "auto",
+    "priority": "P0",
+    "tests": ["tests/test_tools.py::test_graph_list_teams_403_names_team_readbasic_all"]
+  },
+  {
+    "id": "TC-TEAMS-010",
+    "ac": "AC8",
+    "dw": "DW4",
+    "text": "Given a fake GraphClient that raises GraphError(403, ...) for /teams/{id}/channels, When graph_list_channels is called, Then the error envelope names Channel.ReadBasic.All, code is missing_scope, retryable is false",
+    "type": "auto",
+    "priority": "P0",
+    "tests": ["tests/test_tools.py::test_graph_list_channels_403_names_channel_readbasic_all"]
+  },
+  {
+    "id": "TC-TEAMS-011",
+    "ac": "AC8",
+    "dw": "DW4",
+    "text": "Given a fake GraphClient that raises GraphError(403, ...) for /teams/{id}/channels/{id}, When graph_get_channel is called, Then the error envelope names the channel-read scope (Channel.ReadBasic.All or ChannelSettings.Read.All per the Open Questions resolution), code is missing_scope, retryable is false",
+    "type": "auto",
+    "priority": "P0",
+    "tests": ["tests/test_tools.py::test_graph_get_channel_403_names_required_scope"]
+  },
+  {
+    "id": "TC-TEAMS-012",
+    "ac": "AC8",
+    "dw": "DW4",
+    "text": "Given a token from an INT test tenant that has not re-consented for the new scope, When any of the three tools is called, Then the response is the same named-scope error end to end, not a generic 500",
+    "type": "manual",
+    "priority": "P0",
+    "precond": "needs a real vendor account: an M365 tenant (or the same test tenant with the scope deliberately not yet granted) whose admin consent lacks Team.ReadBasic.All / Channel.ReadBasic.All -- per the spec-check's own test note, this may need an admin to set up (name the person if so).",
+    "steps": [
+      "Obtain a Graph access token for a tenant/app registration that has NOT consented to the new scope.",
+      "Call graph_list_teams (or graph_list_channels / graph_get_channel).",
+      "Read the JSON response and the HTTP status."
+    ],
+    "expect": "Response is a structured error naming the missing scope and stating an admin must re-consent; it is not an unhandled exception or a generic 500.",
+    "result": "untested",
+    "evidence": ""
+  },
+  {
+    "id": "TC-TEAMS-013",
+    "ac": "AC9",
+    "dw": "DW5",
+    "text": "Given the caller's token is issued for the INT test tenant, When any of the three tools is called, Then only that tenant's teams/channels are returned and no tool input accepts a different tenant id",
+    "type": "manual",
+    "priority": "P1",
+    "precond": "needs a real vendor account: the INT test tenant and its known team/channel.",
+    "steps": [
+      "Inspect the three tools' input schemas (tools/list) and confirm none accepts a tenant_id or equivalent parameter.",
+      "Call graph_list_teams with the INT test tenant's token and confirm every returned team belongs to that tenant (cross-check a known team id from a different tenant is absent)."
+    ],
+    "expect": "No tenant-selecting parameter exists on any of the three tools; returned data is limited to the token's own tenant.",
+    "result": "untested",
+    "evidence": ""
+  },
+  {
+    "id": "TC-TEAMS-014",
+    "ac": "AC10",
+    "dw": "DW6",
+    "text": "Given the three tools are registered and deployed, When an admin opens this connector's per-tool authorization panel for an agent on INT, Then three new independent switches appear and turning them on enables no send tool",
+    "type": "manual",
+    "priority": "P1",
+    "precond": "needs a real vendor account: an MSPbots agent on INT with the Microsoft Graph connector attached, and the INT build containing this ticket's merge.",
+    "steps": [
+      "Open the agent's Connectors section, expand the Microsoft Graph connector row.",
+      "Search the tool list for graph_list_teams, graph_list_channels, graph_get_channel.",
+      "Toggle them on and confirm the toast and the updated on-count.",
+      "Confirm no send/post-message tool appears in the same connector's tool list."
+    ],
+    "expect": "All three tools appear with their own switch; toggling them on enables only reads, no send tool exists in this connector to enable.",
+    "result": "untested",
+    "evidence": ""
+  },
+  {
+    "id": "TC-TEAMS-015",
+    "ac": "AC11",
+    "dw": "DW7",
+    "text": "Given the three tools are implemented, When the dev leg's [DEV] ticket comment is read back, Then it names the exact Graph permission each tool needs and states they are the least set that passes AC1-AC7",
+    "type": "manual",
+    "priority": "P2",
+    "precond": "none beyond the dev leg's own ticket comment.",
+    "steps": [
+      "Read back the [DEV] comment posted on PRD-22034.",
+      "Confirm it names Team.ReadBasic.All (graph_list_teams) and Channel.ReadBasic.All (graph_list_channels, graph_get_channel; or ChannelSettings.Read.All if the Open Questions resolution required it) and states no broader scope was requested."
+    ],
+    "expect": "The comment names the exact scopes and confirms they are least-sufficient.",
+    "result": "untested",
+    "evidence": ""
+  }
+]
