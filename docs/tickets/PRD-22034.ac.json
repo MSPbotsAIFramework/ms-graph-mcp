@@ -6,7 +6,11 @@
     "text": "Given more teams match name_prefix than page_size, When graph_list_teams is called, Then has_more is true and next_page_token equals the extracted $skiptoken from the fake Graph page's @odata.nextLink",
     "type": "auto",
     "priority": "P1",
-    "tests": ["tests/test_tools.py::test_graph_list_teams_paginates_with_skiptoken"]
+    "tests": [
+      "tests/test_tools.py::test_list_teams_paginates_with_skiptoken"
+    ],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_list_teams_paginates_with_skiptoken -v -> 1 passed (dev/PRD-22034 @ 62aa357)"
   },
   {
     "id": "TC-TEAMS-002",
@@ -15,7 +19,11 @@
     "text": "Given the last page of teams (no @odata.nextLink in the fake Graph response), When graph_list_teams is called, Then has_more is false and next_page_token is null",
     "type": "auto",
     "priority": "P2",
-    "tests": ["tests/test_tools.py::test_graph_list_teams_last_page_has_no_next_token"]
+    "tests": [
+      "tests/test_tools.py::test_list_teams_last_page_has_no_next_token"
+    ],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_list_teams_last_page_has_no_next_token -v -> 1 passed (dev/PRD-22034 @ 62aa357)"
   },
   {
     "id": "TC-TEAMS-003",
@@ -32,7 +40,7 @@
     ],
     "expect": "teams[] contains an entry whose id and displayName match the known test team; count >= 1.",
     "result": "untested",
-    "evidence": ""
+    "evidence": "needs a real vendor account (MSPbots test tenant with its own Microsoft 365 tenant) -- not available in this environment; not a blocker per references/mcp-track.md S2.5/S3."
   },
   {
     "id": "TC-TEAMS-004",
@@ -49,7 +57,7 @@
     ],
     "expect": "teams[] contains the known test team's id and displayName.",
     "result": "untested",
-    "evidence": ""
+    "evidence": "needs a real vendor account (MSPbots test tenant with its own Microsoft 365 tenant) -- not available in this environment; not a blocker per references/mcp-track.md S2.5/S3."
   },
   {
     "id": "TC-TEAMS-005",
@@ -66,7 +74,7 @@
     ],
     "expect": "channels[] contains an entry whose id, membershipType and webUrl match the known test channel.",
     "result": "untested",
-    "evidence": ""
+    "evidence": "needs a real vendor account (MSPbots test tenant with its own Microsoft 365 tenant) -- not available in this environment; not a blocker per references/mcp-track.md S2.5/S3."
   },
   {
     "id": "TC-TEAMS-006",
@@ -82,7 +90,7 @@
     ],
     "expect": "Each call returns only channels of the requested membershipType; no cross-type leakage.",
     "result": "untested",
-    "evidence": ""
+    "evidence": "needs a real vendor account (MSPbots test tenant with its own Microsoft 365 tenant) -- not available in this environment; not a blocker per references/mcp-track.md S2.5/S3."
   },
   {
     "id": "TC-TEAMS-007",
@@ -98,7 +106,7 @@
     ],
     "expect": "Response has the channel's webUrl, isArchived (boolean), and a non-empty email string.",
     "result": "untested",
-    "evidence": ""
+    "evidence": "needs a real vendor account (MSPbots test tenant with its own Microsoft 365 tenant) -- not available in this environment; not a blocker per references/mcp-track.md S2.5/S3."
   },
   {
     "id": "TC-TEAMS-008",
@@ -107,7 +115,11 @@
     "text": "Given a fake Graph channel payload with no email key, When graph_get_channel processes it, Then the tool's response has email as the explicit empty string \"\" and does not fail",
     "type": "auto",
     "priority": "P0",
-    "tests": ["tests/test_tools.py::test_graph_get_channel_email_defaults_to_empty_string"]
+    "tests": [
+      "tests/test_tools.py::test_get_channel_missing_email_is_explicit_empty_string"
+    ],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_get_channel_missing_email_is_explicit_empty_string -v -> 1 passed (dev/PRD-22034 @ 62aa357)"
   },
   {
     "id": "TC-TEAMS-009",
@@ -116,7 +128,11 @@
     "text": "Given a fake GraphClient that raises GraphError(403, ...) for /teams, When graph_list_teams is called, Then the error envelope names Team.ReadBasic.All, code is missing_scope, retryable is false",
     "type": "auto",
     "priority": "P0",
-    "tests": ["tests/test_tools.py::test_graph_list_teams_403_names_team_readbasic_all"]
+    "tests": [
+      "tests/test_tools.py::test_list_teams_names_missing_scope_on_403"
+    ],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_list_teams_names_missing_scope_on_403 -v -> 1 passed (dev/PRD-22034 @ 62aa357)"
   },
   {
     "id": "TC-TEAMS-010",
@@ -125,7 +141,11 @@
     "text": "Given a fake GraphClient that raises GraphError(403, ...) for /teams/{id}/channels, When graph_list_channels is called, Then the error envelope names Channel.ReadBasic.All, code is missing_scope, retryable is false",
     "type": "auto",
     "priority": "P0",
-    "tests": ["tests/test_tools.py::test_graph_list_channels_403_names_channel_readbasic_all"]
+    "tests": [
+      "tests/test_tools.py::test_list_channels_names_missing_scope_on_403"
+    ],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_list_channels_names_missing_scope_on_403 -v -> 1 passed (dev/PRD-22034 @ 62aa357)"
   },
   {
     "id": "TC-TEAMS-011",
@@ -134,7 +154,11 @@
     "text": "Given a fake GraphClient that raises GraphError(403, ...) for /teams/{id}/channels/{id}, When graph_get_channel is called, Then the error envelope names the channel-read scope (Channel.ReadBasic.All or ChannelSettings.Read.All per the Open Questions resolution), code is missing_scope, retryable is false",
     "type": "auto",
     "priority": "P0",
-    "tests": ["tests/test_tools.py::test_graph_get_channel_403_names_required_scope"]
+    "tests": [
+      "tests/test_tools.py::test_get_channel_names_missing_scope_on_403"
+    ],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_get_channel_names_missing_scope_on_403 -v -> 1 passed (dev/PRD-22034 @ 62aa357)"
   },
   {
     "id": "TC-TEAMS-012",
@@ -151,7 +175,7 @@
     ],
     "expect": "Response is a structured error naming the missing scope and stating an admin must re-consent; it is not an unhandled exception or a generic 500.",
     "result": "untested",
-    "evidence": ""
+    "evidence": "needs a real vendor account (MSPbots test tenant with its own Microsoft 365 tenant) -- not available in this environment; not a blocker per references/mcp-track.md S2.5/S3."
   },
   {
     "id": "TC-TEAMS-013",
@@ -167,7 +191,7 @@
     ],
     "expect": "No tenant-selecting parameter exists on any of the three tools; returned data is limited to the token's own tenant.",
     "result": "untested",
-    "evidence": ""
+    "evidence": "needs a real vendor account (MSPbots test tenant with its own Microsoft 365 tenant) -- not available in this environment; not a blocker per references/mcp-track.md S2.5/S3."
   },
   {
     "id": "TC-TEAMS-014",
@@ -185,7 +209,7 @@
     ],
     "expect": "All three tools appear with their own switch; toggling them on enables only reads, no send tool exists in this connector to enable.",
     "result": "untested",
-    "evidence": ""
+    "evidence": "needs a real vendor account (MSPbots test tenant with its own Microsoft 365 tenant) -- not available in this environment; not a blocker per references/mcp-track.md S2.5/S3."
   },
   {
     "id": "TC-TEAMS-015",
@@ -200,7 +224,7 @@
       "Confirm it names Team.ReadBasic.All (graph_list_teams) and Channel.ReadBasic.All (graph_list_channels, graph_get_channel; or ChannelSettings.Read.All if the Open Questions resolution required it) and states no broader scope was requested."
     ],
     "expect": "The comment names the exact scopes and confirms they are least-sufficient.",
-    "result": "untested",
-    "evidence": ""
+    "result": "pass",
+    "evidence": "[DEV] comment (posted via mbp.py exit, which reads it back) states the scopes used: Team.ReadBasic.All for graph_list_teams, Channel.ReadBasic.All for graph_list_channels and graph_get_channel, and that these are the least scopes that pass AC1-AC7 -- no broader scope was requested."
   }
 ]
