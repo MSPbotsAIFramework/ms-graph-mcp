@@ -1,0 +1,10 @@
+# PRD-22034 · Code review
+
+## Round 1 · 2026-11-09 · reviewed dev/PRD-22034 @ 11e5f8c (base 9d3291d)
+
+Verdict: changes requested
+
+### Findings
+1. [must-fix] docs/tickets/PRD-22034.md:119-124,205 — the frozen ticket doc contains leftover CJK characters: the Change list uses a two-byte CJK tag (U+6539, meaning "modified") six times instead of an English tag (inconsistent with the `**[new]**` tag already used for `teams.py` in the same list), and line 205 reads "**Regression<CJK U+9762>**:" (a stray CJK character where "Regression surface" was meant). `grep -rnP '[\x{4e00}-\x{9fff}]' --exclude-dir=.git --exclude-dir=.venv --exclude='PRD-*-review.md' .` from the repo root finds this file (confirmed by review: `docs/tickets/PRD-22034.md` is in the hit list, at the lines above). This directly contradicts the Self-test section's own claim ("Chinese-text scan ... Zero hits in src/, tests/, README.md, docs/gdap-role-map.yaml, or this ticket's own PRD-22034.md/.ac.json") — that claim does not hold. Per `references/mcp-track.md` §4.3, repo docs other than the review record (`PRD-*-review.md`) must have zero CJK characters, and a self-test claim must be backed by evidence that actually holds (an unsupported pass claim is must-fix per `legs/review.md` R3's Test row). Fix: replace the six CJK tags with `**[modified]**`, fix "Regression<CJK U+9762>" to "Regression surface", rerun the CJK scan including the repo root (not just `src/`/`tests/`), and correct the Self-test row so it matches what the scan actually finds.
+
+No other must-fix found. Code (`src/graph_mcp/tools/teams.py`, `_common.py`, `server.py` edits), tests (`tests/test_tools.py`, `tests/test_gdap_role_map.py`), `docs/gdap-role-map.yaml` and the README Tools table / scope-union notes are consistent with the tech design, reuse existing conventions (`skiptoken`, `error_envelope`, the `result.get(...) or ""` idiom, per-module pagination constants), and the gate re-run by this review (`uv run pytest -q`) independently reproduces 256 passed, 0 failed on `dev/PRD-22034 @ 11e5f8c`, matching the Self-test's own gate row.
