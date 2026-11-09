@@ -1,5 +1,7 @@
 # PRD-22034 · Code review
 
+Status: frozen @ 171041c
+
 ## Round 1 · 2026-11-09 · reviewed dev/PRD-22034 @ 11e5f8c (base 9d3291d)
 
 Verdict: changes requested
@@ -39,3 +41,28 @@ The "Regression<U+9762>" typo at line 205 is a different sub-category (a corrupt
 **Self-test wording**: the cited claim ("Zero hits ... or this ticket's own PRD-22034.md/.ac.json") is narrower than it should have been — it over-claimed by folding the ticket's own frozen design-doc shorthand into the same "zero hits" bucket as `src/`/`tests/`/`README.md`/`docs/gdap-role-map.yaml`, instead of carving it out separately the way every sibling ticket's self-test does (e.g. `PRD-20393-r4.md:226`, `PRD-21581.md:197`, `PRD-21584.md:243`: "zero hits in src/tests/README/yaml; N hits remain in this ticket's own frozen design doc, pre-existing, non-blocking"). That row in `docs/tickets/PRD-22034.md` cannot be edited now (frozen); the accurate statement, matching the established sibling-ticket phrasing, is recorded here instead: **zero CJK hits in `src/`, `tests/`, `README.md`, `docs/gdap-role-map.yaml`, and `docs/tickets/PRD-22034.ac.json`; two pre-existing, non-blocking CJK spots remain in this ticket's own frozen `docs/tickets/PRD-22034.md` (the six CJK U+6539 tags at lines 119-124, the "Regression<U+9762>" typo at line 205), both authored by the design leg before any dev-leg commit, same category precedent above.**
 
 Leaving this for round 2 to judge: either accept the precedent above and reclassify as non-blocking, or say which part of the precedent doesn't apply here.
+
+## Round 2 · 2026-11-09 · reviewed dev/PRD-22034 @ 171041c (base 9d3291d)
+
+Verdict: approved
+
+### Findings
+
+No must-fix. Round 1's must-fix 1 is reclassified as non-blocking/suggestion (see round 1's Fixes section): independently re-verified both parts of the dispute before accepting it.
+
+- The underlying CJK claim checks out byte-for-byte: `grep -rnP '[\x{4e00}-\x{9fff}]' --exclude-dir=.git --exclude-dir=.venv --exclude='PRD-*-review.md' .` from the repo root still hits only `docs/tickets/PRD-22034.md` — the six CJK U+6539 tags at lines 119-124 and the CJK U+9762 character at line 205 — and `grep -rnP '[\x{4e00}-\x{9fff}]' src/ tests/ README.md docs/gdap-role-map.yaml docs/tickets/PRD-22034.ac.json` is empty. No code, test, README or yaml CJK leak exists; the only CJK is inside the ticket's own frozen main doc, which this dev leg has no authority to edit (`legs/dev.md` S1 "Review rework").
+- The five cited precedents were independently pulled and read, not taken on faith: `docs/tickets/PRD-20393-r4.md:226`, `PRD-21580.md:91-93,101`, `PRD-21581.md:197`, `PRD-21583.md:174`, `PRD-21584.md:243`, and `PRD-21582-review.md`'s own Round 1 Fixes all confirm the same reading — pre-existing CJK shorthand/typos inside a ticket's own frozen design doc, authored by the design leg before any dev-leg commit, is suggestion-only/non-blocking across this repo's own review history, not a one-off excuse invented for this ticket. The citation-note correction (`mcp-track.md` §4.3 is scoped to the review-record file, not every repo doc) is also correct on a re-read of that section.
+- Accepting the precedent: reclassifying `docs/tickets/PRD-22034.md:119-124,205` as **[suggestion]**, non-blocking. A design-leg pass can clean up the two cosmetic spots (the CJK U+6539 tag -> `**[modified]**`, the CJK U+9762 character -> "Regression surface") the next time this doc is reopened for a real rework round; it does not gate this review.
+
+Code (`src/graph_mcp/tools/teams.py`, `_common.py`, `server.py`), tests (`tests/test_tools.py`'s 11 new cases, `tests/test_gdap_role_map.py`'s `53 -> 56` bump) and docs (`docs/gdap-role-map.yaml`, README Tools table + scope-union notes) are unchanged since round 1 (no new commits — `dev/PRD-22034` is still at `171041c`, the same tree round 1 reviewed at the code level) and remain consistent with the tech design: reuse of `skiptoken()`, `GraphError`/`error_envelope`, the `result.get(...) or ""` idiom and per-module pagination constants; the one new piece of machinery (`missing_scope_error()`) is additive-only and does not touch the shared `GraphError`/`_classify` path every other of the repo's 53 tools depends on; credentials are read the same per-request-header/contextvar way as every other tool, never logged or persisted; `docs/gdap-role-map.yaml` and the README Tools table both gained matching rows for all three tools with matching GDAP roles.
+
+Independently re-run (not just re-cited) this round:
+- `uv sync -q && uv run pytest -q` on `dev/PRD-22034 @ 171041c` → **256 passed, 0 failed** — matches round 1's and the Self-test's own number exactly, confirms no regression and no flake.
+- README Connector section (`sed -n '5,75p' README.md`) diffed byte-for-byte against `~/.claude/skills/vendor-mcp-development/reference/readme-connector-section.md` → identical, no hunks.
+- `tests/test_gdap_role_map.py`'s `assert len(role_map) == 56` and the three-way consistency check (`check_consistency`) pass as part of the full suite above — the yaml/README/registered-tools triple is in lockstep.
+
+### Fixes
+
+N/A — round 2 is an approval, no new must-fix to action.
+
+Status: frozen @ 171041c
