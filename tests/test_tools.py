@@ -77,6 +77,7 @@ EXPECTED_TOOLS = {
     "graph_list_teams": set(),
     "graph_list_channels": {"team_id"},
     "graph_get_channel": {"team_id", "channel_id"},
+    "graph_send_channel_message": {"team_id", "channel_id", "body"},
 }
 
 # Tools that are not plain read-only queries (writes / mutations).
@@ -106,6 +107,7 @@ _NON_READ_ONLY = {
     "graph_start_cloud_sync",
     "graph_service_principal_create_and_add_password",
     "graph_create_invitation",
+    "graph_send_channel_message",
 }
 
 
@@ -231,7 +233,10 @@ async def test_tools_list_snapshot():
     # graph_get_channel takes no filter) -- collapsing them would need an
     # internal mode flag the calling agent can't see, the same rejection
     # reasoning as the calendar/mail notes above.
-    assert len(names) <= 56, "tool count should stay within SOP's <=20 guideline (+36 justified)"
+    # +1 for graph_send_channel_message (PRD-22035): the only write against
+    # /teams/{id}/channels/{id}/messages; graph_send_mail cannot reach a
+    # channel without per-channel email setup.
+    assert len(names) <= 57, "tool count should stay within SOP's <=20 guideline (+37 justified)"
 
     by_name = {t.name: t for t in tools}
     # Collect every violation instead of asserting per-tool inside the loop
@@ -5602,3 +5607,239 @@ async def test_list_teams_returns_no_token_without_client():
 
     result = json.loads((await mcp.call_tool("graph_list_teams", {}))[0][0].text)
     assert result["error"]["code"] == "not_configured"
+
+
+# --- PRD-22035: graph_send_channel_message ----------------------------------
+
+
+class _ForbiddenPostClient:
+    """POST always raises a 403 -- an app-only token, a tenant without
+    ChannelMessage.Send consent, or a user who is not in the channel."""
+
+    async def post(self, path: str, body=None, extra_headers=None):
+        raise GraphError(403, "Forbidden")
+
+
+@pytest.mark.asyncio
+async def test_send_channel_message_posts_once_and_returns_ids():
+    from graph_mcp.tools import teams
+
+    mcp, client = _register(
+        teams,
+        result={
+            "id": "1700000000000",
+            "webUrl": "https://teams.microsoft.com/l/message/19:abc/1700000000000",
+            "createdDateTime": "2026-11-10T03:00:00Z",
+        },
+    )
+    result = json.loads(
+        (
+            await mcp.call_tool(
+                "graph_send_channel_message",
+                {"team_id": "t1", "channel_id": "19:abc", "body": "No engineer free", "subject": "NO_RESOURCE", "importance": "high"},
+            )
+        )[0][0].text
+    )
+    assert client.methods == ["POST"]
+    assert client.calls[0][0] == "/teams/t1/channels/19:abc/messages"
+    assert client.bodies[0] == {
+        "body": {"contentType": "text", "content": "No engineer free"},
+        "importance": "high",
+        "subject": "NO_RESOURCE",
+    }
+    assert result == {
+        "status": "sent",
+        "message_id": "1700000000000",
+        "webUrl": "https://teams.microsoft.com/l/message/19:abc/1700000000000",
+        "sent_at": "2026-11-10T03:00:00Z",
+        "team_id": "t1",
+        "channel_id": "19:abc",
+    }
+
+
+@pytest.mark.asyncio
+async def test_send_channel_message_builds_mentions_and_escapes_text():
+    """Mentions force an HTML body; each <at id=n> must match mentions[n],
+    and a plain-text body is escaped so ticket text stays text."""
+    from graph_mcp.tools import teams
+
+    mcp, client = _register(
+        teams,
+        result={"id": "m1"},
+        get_result={"id": "guid-1", "displayName": "Tim <Ops>"},
+    )
+    await mcp.call_tool(
+        "graph_send_channel_message",
+        {
+            "team_id": "t1",
+            "channel_id": "c1",
+            "body": "<script>x</script>\nline2",
+            "mention_user_ids": ["tim@contoso.com", "tim@contoso.com"],
+        },
+    )
+    assert client.methods == ["GET", "POST"]
+    assert client.calls[0] == ("/users/tim@contoso.com", {"$select": "id,displayName"})
+    body = client.bodies[0]
+    assert body["body"]["contentType"] == "html"
+    assert body["body"]["content"] == (
+        '<p><at id="0">Tim &lt;Ops&gt;</at></p>&lt;script&gt;x&lt;/script&gt;<br>line2'
+    )
+    assert body["mentions"] == [
+        {
+            "id": 0,
+            "mentionText": "Tim <Ops>",
+            "mentioned": {"user": {"id": "guid-1", "displayName": "Tim <Ops>", "userIdentityType": "aadUser"}},
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_send_channel_message_refuses_too_many_mentions_without_calling_graph():
+    from graph_mcp.tools import teams
+
+    mcp, client = _register(teams)
+    result = json.loads(
+        (
+            await mcp.call_tool(
+                "graph_send_channel_message",
+                {"team_id": "t1", "channel_id": "c1", "body": "x", "mention_user_ids": [f"u{i}" for i in range(6)]},
+            )
+        )[0][0].text
+    )
+    assert result["error"]["code"] == "invalid_argument"
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_send_channel_message_refuses_oversized_body_without_truncating():
+    from graph_mcp.tools import teams
+
+    mcp, client = _register(teams)
+    result = json.loads(
+        (
+            await mcp.call_tool(
+                "graph_send_channel_message",
+                {"team_id": "t1", "channel_id": "c1", "body": "a" * 28_001},
+            )
+        )[0][0].text
+    )
+    assert result["error"]["code"] == "invalid_argument"
+    assert result["error"]["size"] == 28_001
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_send_channel_message_403_explains_delegated_scope_and_membership():
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import teams
+
+    mcp = FastMCP(name="test")
+    teams.register(mcp, lambda: _ForbiddenPostClient())
+    result = json.loads(
+        (
+            await mcp.call_tool(
+                "graph_send_channel_message", {"team_id": "t1", "channel_id": "c1", "body": "x"}
+            )
+        )[0][0].text
+    )
+    assert result["error"]["code"] == "unauthorized"
+    assert result["error"]["required_scope"] == "ChannelMessage.Send"
+    assert "app-only" in result["error"]["message"]
+    assert "member" in result["error"]["message"]
+
+
+# --- PRD-22035 Done-when 8: an HTML body is sanitised before it is posted ----
+
+
+async def _send_html(body: str, **extra):
+    from graph_mcp.tools import teams
+
+    mcp, client = _register(
+        teams, result={"id": "m1"}, get_result={"id": "guid-1", "displayName": "Tim"}
+    )
+    args = {"team_id": "t1", "channel_id": "c1", "body": body, "body_content_type": "html", **extra}
+    result = json.loads((await mcp.call_tool("graph_send_channel_message", args))[0][0].text)
+    return result, client
+
+
+@pytest.mark.asyncio
+async def test_send_channel_message_html_strips_script_and_external_image():
+    result, client = await _send_html(
+        '<p>Alert</p><script>alert(1)</script><img src="https://example.com/x.png" alt="x">'
+    )
+    assert client.bodies[0]["body"] == {"contentType": "html", "content": "<p>Alert</p>"}
+    assert result["status"] == "sent"
+    assert result["removed"] == ["img", "script"]
+
+
+@pytest.mark.asyncio
+async def test_send_channel_message_html_drops_event_handlers_and_javascript_links():
+    result, client = await _send_html(
+        '<p onclick="steal()">Hi <a href="javascript:alert(1)">bad</a> '
+        '<a href="https://contoso.com/t/1" target="_blank" onmouseover="x()">ticket</a></p>'
+    )
+    assert client.bodies[0]["body"]["content"] == (
+        '<p>Hi <a>bad</a> <a href="https://contoso.com/t/1">ticket</a></p>'
+    )
+    assert result["removed"] == [
+        "attribute:href",
+        "attribute:onclick",
+        "attribute:onmouseover",
+        "attribute:target",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_send_channel_message_html_keeps_formatting_and_escapes_text():
+    result, client = await _send_html(
+        "<p><b>Ticket</b> &lt;b&gt;quoted&lt;/b&gt; <i>x</i></p><ul><li>a &amp; b</li></ul><br>"
+    )
+    assert client.bodies[0]["body"]["content"] == (
+        "<p><b>Ticket</b> &lt;b&gt;quoted&lt;/b&gt; <i>x</i></p><ul><li>a &amp; b</li></ul><br>"
+    )
+    assert "removed" not in result
+
+
+@pytest.mark.asyncio
+async def test_send_channel_message_html_removes_content_of_style_iframe_and_svg():
+    result, client = await _send_html(
+        "<style>p{}</style><iframe src='https://evil'>fallback</iframe>"
+        "<svg><script>x</script></svg>Text"
+    )
+    assert client.bodies[0]["body"]["content"] == "Text"
+    assert result["removed"] == ["iframe", "style", "svg"]
+
+
+@pytest.mark.asyncio
+async def test_send_channel_message_html_body_cannot_forge_mention_tags():
+    """<at> tags are built by the tool only; a forged one in the body is
+    stripped (its text is kept) so it cannot break the mentions array."""
+    result, client = await _send_html(
+        '<at id="0">Everyone</at> hi', mention_user_ids=["tim@contoso.com"]
+    )
+    assert client.bodies[0]["body"]["content"] == '<p><at id="0">Tim</at></p>Everyone hi'
+    assert result["removed"] == ["at"]
+
+
+@pytest.mark.asyncio
+async def test_send_channel_message_refuses_body_that_is_empty_after_sanitising():
+    result, client = await _send_html(
+        '<script>alert(1)</script><img src="https://example.com/x.png">'
+    )
+    assert result["error"]["code"] == "invalid_argument"
+    assert result["error"]["removed"] == ["img", "script"]
+    assert client.methods == []
+
+
+@pytest.mark.asyncio
+async def test_send_channel_message_text_body_is_not_sanitised():
+    """A plain-text body is shown as text by Teams; it is sent unchanged."""
+    from graph_mcp.tools import teams
+
+    mcp, client = _register(teams, result={"id": "m1"})
+    await mcp.call_tool(
+        "graph_send_channel_message",
+        {"team_id": "t1", "channel_id": "c1", "body": "<img src=x> <b>y</b>"},
+    )
+    assert client.bodies[0]["body"] == {"contentType": "text", "content": "<img src=x> <b>y</b>"}

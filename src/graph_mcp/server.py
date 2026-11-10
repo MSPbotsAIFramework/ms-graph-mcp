@@ -84,7 +84,7 @@ def create_mcp_server(settings: Settings) -> FastMCP:
             "groups (search/list groups, manage a user's memberships and owned "
             "groups), licenses (check tenant SKU stock and assign/remove SKUs on a "
             "user — usage_location must be set first), domains, conditional "
-            "access policies, and teams (find a team and its channels), "
+            "access policies, and teams (find a team and its channels, post to a channel), "
             "mail (triage and send mail as the signed-in user), "
             "sites (read/write SharePoint document libraries), "
             "devices (list/remove a user's Intune-enrolled "
@@ -102,7 +102,7 @@ def create_mcp_server(settings: Settings) -> FastMCP:
             "Typical scheduling: "
             "graph_get_user_availability -> graph_create_calendar_event. "
             "Typical team discovery: graph_list_teams -> graph_list_channels -> "
-            "graph_get_channel. All tools "
+            "graph_get_channel -> graph_send_channel_message. All tools "
             "act on the caller's own tenant via a per-request token; no "
             "cross-tenant access."
         ),
