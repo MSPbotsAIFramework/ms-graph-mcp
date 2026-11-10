@@ -10,7 +10,7 @@
       "tests/test_tools.py::test_list_teams_paginates_with_skiptoken"
     ],
     "result": "pass",
-    "evidence": "uv run pytest tests/test_tools.py::test_list_teams_paginates_with_skiptoken -v -> 1 passed (dev/PRD-22034 @ 62aa357)"
+    "evidence": "uv run pytest tests/test_tools.py::test_list_teams_paginates_with_skiptoken -v -> 1 passed (dev/PRD-22034 @ 1511203 + uncommitted rework r2 fix; re-run in selftest round 2, 2026-11-10)"
   },
   {
     "id": "TC-TEAMS-002",
@@ -23,7 +23,7 @@
       "tests/test_tools.py::test_list_teams_last_page_has_no_next_token"
     ],
     "result": "pass",
-    "evidence": "uv run pytest tests/test_tools.py::test_list_teams_last_page_has_no_next_token -v -> 1 passed (dev/PRD-22034 @ 62aa357)"
+    "evidence": "uv run pytest tests/test_tools.py::test_list_teams_last_page_has_no_next_token -v -> 1 passed (dev/PRD-22034 @ 1511203 + uncommitted rework r2 fix; re-run in selftest round 2, 2026-11-10)"
   },
   {
     "id": "TC-TEAMS-003",
@@ -119,7 +119,7 @@
       "tests/test_tools.py::test_get_channel_missing_email_is_explicit_empty_string"
     ],
     "result": "pass",
-    "evidence": "uv run pytest tests/test_tools.py::test_get_channel_missing_email_is_explicit_empty_string -v -> 1 passed (dev/PRD-22034 @ 62aa357)"
+    "evidence": "uv run pytest tests/test_tools.py::test_get_channel_missing_email_is_explicit_empty_string -v -> 1 passed (dev/PRD-22034 @ 1511203 + uncommitted rework r2 fix; re-run in selftest round 2, 2026-11-10)"
   },
   {
     "id": "TC-TEAMS-009",
@@ -132,7 +132,7 @@
       "tests/test_tools.py::test_list_teams_names_missing_scope_on_403"
     ],
     "result": "pass",
-    "evidence": "uv run pytest tests/test_tools.py::test_list_teams_names_missing_scope_on_403 -v -> 1 passed (dev/PRD-22034 @ 62aa357)"
+    "evidence": "uv run pytest tests/test_tools.py::test_list_teams_names_missing_scope_on_403 -v -> 1 passed (dev/PRD-22034 @ 1511203 + uncommitted rework r2 fix; re-run in selftest round 2, 2026-11-10)"
   },
   {
     "id": "TC-TEAMS-010",
@@ -145,7 +145,7 @@
       "tests/test_tools.py::test_list_channels_names_missing_scope_on_403"
     ],
     "result": "pass",
-    "evidence": "uv run pytest tests/test_tools.py::test_list_channels_names_missing_scope_on_403 -v -> 1 passed (dev/PRD-22034 @ 62aa357)"
+    "evidence": "uv run pytest tests/test_tools.py::test_list_channels_names_missing_scope_on_403 -v -> 1 passed (dev/PRD-22034 @ 1511203 + uncommitted rework r2 fix; re-run in selftest round 2, 2026-11-10)"
   },
   {
     "id": "TC-TEAMS-011",
@@ -158,7 +158,7 @@
       "tests/test_tools.py::test_get_channel_names_missing_scope_on_403"
     ],
     "result": "pass",
-    "evidence": "uv run pytest tests/test_tools.py::test_get_channel_names_missing_scope_on_403 -v -> 1 passed (dev/PRD-22034 @ 62aa357)"
+    "evidence": "uv run pytest tests/test_tools.py::test_get_channel_names_missing_scope_on_403 -v -> 1 passed (dev/PRD-22034 @ 1511203 + uncommitted rework r2 fix; re-run in selftest round 2, 2026-11-10)"
   },
   {
     "id": "TC-TEAMS-012",
@@ -226,5 +226,20 @@
     "expect": "The comment names the exact scopes and confirms they are least-sufficient.",
     "result": "pass",
     "evidence": "[DEV] comment (posted via mbp.py exit, which reads it back) states the scopes used: Team.ReadBasic.All for graph_list_teams, Channel.ReadBasic.All for graph_list_channels and graph_get_channel, and that these are the least scopes that pass AC1-AC7 -- no broader scope was requested."
+  },
+  {
+    "id": "TC-TEAMS-016",
+    "ac": "AC3",
+    "dw": "DW1",
+    "type": "auto",
+    "priority": "P0",
+    "source": "rework round 2, comment #1600390000061290",
+    "text": "Given user_id is set (with no name_prefix) and page_size smaller than the user's joined-teams count, When graph_list_teams(user_id=..., page_size=<N>) is called, Then it succeeds (no invalid_argument / \"Query option 'Top' is not allowed\" error), the recorded Graph request to /users/{user_id}/joinedTeams carries no $top and no $skiptoken, and has_more/next_page_token still behave correctly when pagination is applied client-side across two calls -- instead of failing on every user_id call as found in production (tenant 2qmxyw, 2026-11-10).",
+    "tests": [
+      "tests/test_tools.py::test_list_teams_by_user_id_omits_top_and_skiptoken",
+      "tests/test_tools.py::test_list_teams_by_user_id_paginates_client_side"
+    ],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_list_teams_by_user_id_omits_top_and_skiptoken tests/test_tools.py::test_list_teams_by_user_id_paginates_client_side -v -> 2 passed (dev/PRD-22034 @ 1511203 + uncommitted rework r2 fix: src/graph_mcp/tools/teams.py user_id branch now calls /users/{id}/joinedTeams with only $select and paginates client-side via new _decode_offset() helper; verified the recorded request carries neither $top nor $skiptoken and that next_page_token correctly drives a second client-side page)"
   }
 ]
