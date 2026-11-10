@@ -263,3 +263,9 @@ graph_get_channel:
   note: 'Read-only: reads one channel''s details including an explicit-empty
     email value. Role assumed per graph_list_teams''s note above -- see
     PRD-22034 Open Questions.'
+graph_send_channel_message:
+  roles: null
+  note: 'Write: posts a new message to a Teams channel as the signed-in user
+    (PRD-22035). Posting is governed by channel membership, not by an admin
+    role, so no GDAP role is listed: a partner admin acting through GDAP is
+    normally not a member of the customer''s channels and cannot post.'

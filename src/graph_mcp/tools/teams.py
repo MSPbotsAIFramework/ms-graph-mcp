@@ -1,3 +1,4 @@
+import html
 from collections.abc import Callable
 from typing import Annotated, Literal
 
@@ -5,7 +6,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from .._json import dump_json_capped
+from .._json import dump_json_capped, error_envelope
 from ..api_client import GraphClient, GraphError
 from ._common import NO_TOKEN, missing_scope_error, odata_quote, skiptoken
 
@@ -18,6 +19,16 @@ _GRAPH_TOP_MAX = 999
 _TEAM_SELECT = "id,displayName,description,visibility"
 _CHANNEL_SELECT = "id,displayName,membershipType,webUrl"
 _CHANNEL_DETAIL_SELECT = "id,displayName,description,membershipType,email,webUrl,isArchived"
+
+# graph_send_channel_message (PRD-22035).
+_SEND_SCOPE = "ChannelMessage.Send"
+# Same cap PRD-22030 proposed for individual mentions; there is no @team /
+# @channel mention support at all, so broad mentions cannot be built.
+_MAX_MENTIONS = 5
+# Graph rejects a chatMessage whose body is over roughly 28 KB. Checked up
+# front so an oversized body is refused clearly instead of half-posted or
+# truncated.
+_MAX_BODY_BYTES = 28_000
 
 
 def register(mcp: FastMCP, client_factory: Callable[[], GraphClient | None]) -> None:
@@ -159,5 +170,133 @@ def register(mcp: FastMCP, client_factory: Callable[[], GraphClient | None]) -> 
                 "email": result.get("email") or "",
                 "webUrl": result.get("webUrl"),
                 "isArchived": result.get("isArchived"),
+            }
+        )
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True
+        )
+    )
+    async def graph_send_channel_message(
+        team_id: Annotated[str, Field(description="The team's id, from graph_list_teams.")],
+        channel_id: Annotated[
+            str, Field(description="The channel's id, from graph_list_channels.")
+        ],
+        body: Annotated[str, Field(description="Message body, plain text or HTML (see body_content_type).")],
+        body_content_type: Annotated[
+            Literal["text", "html"], Field(description='"text" or "html".')
+        ] = "text",
+        subject: Annotated[
+            str | None, Field(description="Optional subject line shown above the post.")
+        ] = None,
+        importance: Annotated[
+            Literal["normal", "high", "urgent"], Field(description="Post importance.")
+        ] = "normal",
+        mention_user_ids: Annotated[
+            list[str] | None,
+            Field(
+                description=f"Users to @mention (object id or userPrincipalName), at most {_MAX_MENTIONS}. The mentions are placed at the start of the post."
+            ),
+        ] = None,
+    ) -> str:
+        """Post a new message to a Teams channel as the signed-in user.
+
+        One post per call; no thread replies. Irreversible once sent.
+        Returns message_id and webUrl. Delegated Microsoft Graph connector
+        only: needs ChannelMessage.Send and the signed-in user must be a
+        member of the channel. The app-only connector cannot post (Graph
+        has no application permission for this).
+        """
+        client = client_factory()
+        if client is None:
+            return NO_TOKEN
+
+        mention_ids = list(dict.fromkeys(m.strip() for m in (mention_user_ids or []) if m.strip()))
+        if len(mention_ids) > _MAX_MENTIONS:
+            return error_envelope(
+                "invalid_argument",
+                f"At most {_MAX_MENTIONS} users can be mentioned in one post, got {len(mention_ids)}.",
+                False,
+            )
+
+        mentions: list[dict] = []
+        for i, user_id in enumerate(mention_ids):
+            try:
+                user = await client.get(f"/users/{user_id}", params={"$select": "id,displayName"})
+            except GraphError as e:
+                return e.to_envelope()
+            name = (user or {}).get("displayName") or user_id
+            mentions.append(
+                {
+                    "id": i,
+                    "mentionText": name,
+                    "mentioned": {
+                        "user": {
+                            "id": (user or {}).get("id") or user_id,
+                            "displayName": name,
+                            "userIdentityType": "aadUser",
+                        }
+                    },
+                }
+            )
+
+        content_type = body_content_type
+        content = body
+        if mentions:
+            # Mentions only render in an HTML body, and each <at id="n"> tag
+            # must match the mentions[n] entry. A plain-text body is escaped
+            # so it still reads as text once the type becomes html.
+            if content_type == "text":
+                content = html.escape(content).replace("\n", "<br>")
+                content_type = "html"
+            tags = " ".join(
+                f'<at id="{m["id"]}">{html.escape(m["mentionText"])}</at>' for m in mentions
+            )
+            content = f"<p>{tags}</p>{content}"
+
+        size = len(content.encode("utf-8"))
+        if size > _MAX_BODY_BYTES:
+            return error_envelope(
+                "invalid_argument",
+                f"Message body is {size} bytes; Teams accepts at most about {_MAX_BODY_BYTES}. "
+                "Shorten it; it is not truncated.",
+                False,
+                extra={"size": size, "limit": _MAX_BODY_BYTES},
+            )
+
+        payload: dict = {
+            "body": {"contentType": content_type, "content": content},
+            "importance": importance,
+        }
+        if subject:
+            payload["subject"] = subject
+        if mentions:
+            payload["mentions"] = mentions
+
+        try:
+            result = await client.post(f"/teams/{team_id}/channels/{channel_id}/messages", payload)
+        except GraphError as e:
+            if e.status_code == 403:
+                return error_envelope(
+                    "unauthorized",
+                    f"Teams refused the post. Check that: the connector is the delegated "
+                    f"Microsoft Graph connector (the app-only one cannot post to channels); "
+                    f"an admin has consented to {_SEND_SCOPE}; and the signed-in user is a "
+                    f"member of this channel.",
+                    False,
+                    extra={"required_scope": _SEND_SCOPE, "graph_status": 403},
+                )
+            return e.to_envelope()
+
+        result = result if isinstance(result, dict) else {}
+        return dump_json_capped(
+            {
+                "status": "sent",
+                "message_id": result.get("id"),
+                "webUrl": result.get("webUrl"),
+                "sent_at": result.get("createdDateTime"),
+                "team_id": team_id,
+                "channel_id": channel_id,
             }
         )
