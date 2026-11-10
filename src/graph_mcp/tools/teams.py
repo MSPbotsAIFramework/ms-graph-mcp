@@ -111,6 +111,20 @@ def _sanitize_html(body: str) -> tuple[str, list[str], bool]:
     return "".join(parser.out), sorted(parser.removed), bool("".join(parser.text).strip())
 
 
+def _decode_offset(page_token: str | None) -> int:
+    """Decode graph_list_teams' user_id-branch page_token (a client-side
+    list offset, PRD-22034 r2 D1) back into an int. Never raises -- an
+    absent, blank or non-numeric token (e.g. a stray /teams $skiptoken)
+    just restarts from the first page rather than failing the call."""
+    if not page_token:
+        return 0
+    try:
+        offset = int(page_token)
+    except ValueError:
+        return 0
+    return max(0, offset)
+
+
 def register(mcp: FastMCP, client_factory: Callable[[], GraphClient | None]) -> None:
 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True))
@@ -147,27 +161,56 @@ def register(mcp: FastMCP, client_factory: Callable[[], GraphClient | None]) -> 
             return NO_TOKEN
 
         page_size = max(1, min(page_size, _HARD_CAP_PAGE_SIZE))
+
+        # PRD-22034 rework (r2, D1): real Graph rejects $top/$skiptoken on
+        # /users/{id}/joinedTeams ("Query option 'Top' is not allowed"),
+        # unlike /teams. That endpoint also does not paginate server-side
+        # (per the production report this fix was written from), so the
+        # user_id branch fetches the full list in one call and paginates
+        # it client-side instead -- the external has_more/next_page_token
+        # contract (AC1) stays identical, only the mechanism differs.
+        if user_id:
+            try:
+                result = await client.get(
+                    f"/users/{user_id}/joinedTeams", params={"$select": _TEAM_SELECT}
+                )
+            except GraphError as e:
+                return missing_scope_error(e, "Team.ReadBasic.All")
+
+            teams = result.get("value", []) if isinstance(result, dict) else []
+            if name_prefix:
+                prefix = name_prefix.lower()
+                teams = [
+                    t for t in teams if (t.get("displayName") or "").lower().startswith(prefix)
+                ]
+            offset = _decode_offset(page_token)
+            page = teams[offset : offset + page_size]
+            next_offset = offset + page_size
+            has_more = next_offset < len(teams)
+            return dump_json_capped(
+                {
+                    "count": len(page),
+                    "teams": page,
+                    "has_more": has_more,
+                    "next_page_token": str(next_offset) if has_more else None,
+                }
+            )
+
         params: dict = {
             "$select": _TEAM_SELECT,
             "$top": str(min(page_size, _GRAPH_TOP_MAX)),
         }
         if page_token:
             params["$skiptoken"] = page_token
+        if name_prefix:
+            params["$filter"] = f"startswith(displayName,'{odata_quote(name_prefix)}')"
 
         try:
-            if user_id:
-                result = await client.get(f"/users/{user_id}/joinedTeams", params=params)
-            else:
-                if name_prefix:
-                    params["$filter"] = f"startswith(displayName,'{odata_quote(name_prefix)}')"
-                result = await client.get("/teams", params=params)
+            result = await client.get("/teams", params=params)
         except GraphError as e:
             return missing_scope_error(e, "Team.ReadBasic.All")
 
         teams = result.get("value", []) if isinstance(result, dict) else []
-        if user_id and name_prefix:
-            prefix = name_prefix.lower()
-            teams = [t for t in teams if (t.get("displayName") or "").lower().startswith(prefix)]
         next_token = skiptoken(result.get("@odata.nextLink")) if isinstance(result, dict) else None
         return dump_json_capped(
             {

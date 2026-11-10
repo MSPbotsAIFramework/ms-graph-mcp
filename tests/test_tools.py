@@ -5594,6 +5594,70 @@ async def test_list_teams_by_user_id_applies_name_prefix_client_side():
 
 
 @pytest.mark.asyncio
+async def test_list_teams_by_user_id_omits_top_and_skiptoken():
+    """TC-TEAMS-016/AC3,DW1 (rework round 2, D1): real Graph rejects $top on
+    /users/{id}/joinedTeams ("Query option 'Top' is not allowed" -- prod
+    tenant 2qmxyw, comment #1600390000061290). The recorded request must
+    carry neither $top nor $skiptoken, regardless of page_size/page_token."""
+    from graph_mcp.tools import teams
+
+    mcp, client = _register(
+        teams, result={"value": [{"id": "t1", "displayName": "Mainstream SOP"}]}
+    )
+    await mcp.call_tool("graph_list_teams", {"user_id": "u1", "page_size": 1})
+    path, params = client.calls[0]
+    assert path == "/users/u1/joinedTeams"
+    assert "$top" not in params
+    assert "$skiptoken" not in params
+
+
+@pytest.mark.asyncio
+async def test_list_teams_by_user_id_paginates_client_side():
+    """TC-TEAMS-016/AC3,DW1: Graph does not paginate /users/{id}/joinedTeams
+    (it returns the full list in one response, per the prod report this fix
+    was written from), so graph_list_teams must apply page_size itself and
+    hand back a next_page_token that produces the second half of the list
+    on the next call -- one Graph call per tool call either way, same
+    has_more/next_page_token shape the /teams branch already has."""
+    from graph_mcp.tools import teams
+
+    mcp, client = _register(
+        teams,
+        result={
+            "value": [
+                {"id": "t1", "displayName": "Team One"},
+                {"id": "t2", "displayName": "Team Two"},
+                {"id": "t3", "displayName": "Team Three"},
+            ]
+        },
+    )
+    first = json.loads(
+        (await mcp.call_tool("graph_list_teams", {"user_id": "u1", "page_size": 2}))[0][0].text
+    )
+    assert [t["id"] for t in first["teams"]] == ["t1", "t2"]
+    assert first["has_more"] is True
+    assert first["next_page_token"] == "2"
+
+    second = json.loads(
+        (
+            await mcp.call_tool(
+                "graph_list_teams",
+                {"user_id": "u1", "page_size": 2, "page_token": first["next_page_token"]},
+            )
+        )[0][0].text
+    )
+    assert [t["id"] for t in second["teams"]] == ["t3"]
+    assert second["has_more"] is False
+    assert second["next_page_token"] is None
+    # Each tool call still makes exactly one Graph request, and neither
+    # carries $top/$skiptoken.
+    assert len(client.calls) == 2
+    for _, params in client.calls:
+        assert "$top" not in params
+        assert "$skiptoken" not in params
+
+
+@pytest.mark.asyncio
 async def test_list_teams_returns_no_token_without_client():
     """Defensive branch: client_factory() resolving to None (no per-request
     Graph client) must return the connector's standard NO_TOKEN envelope,
