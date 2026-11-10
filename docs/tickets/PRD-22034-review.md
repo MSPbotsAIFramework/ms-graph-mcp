@@ -1,6 +1,6 @@
 # PRD-22034 · Code review
 
-Status: frozen @ 171041c
+Status: frozen @ 08f184b
 
 ## Round 1 · 2026-11-09 · reviewed dev/PRD-22034 @ 11e5f8c (base 9d3291d)
 
@@ -65,4 +65,27 @@ Independently re-run (not just re-cited) this round:
 
 N/A — round 2 is an approval, no new must-fix to action.
 
-Status: frozen @ 171041c
+## Round 3 · 2026-11-10 · reviewed dev/PRD-22034 @ 08f184b (base master @ 1596cae1)
+
+Verdict: approved
+
+### Findings
+
+No must-fix found. This round is a narrow rework fix, not a new feature or a reopened scope: `src/graph_mcp/tools/teams.py`'s `graph_list_teams(user_id=...)` branch no longer sends `$top`/`$skiptoken` to `GET /users/{user_id}/joinedTeams` (real Graph rejects `$top` there — confirmed in production, tenant `2qmxyw`, comment #1600390000061290). It now calls that endpoint with only `$select`, applies `name_prefix` and `page_size` filtering client-side on the full returned list, and encodes a list offset into the same opaque `page_token` via the new `_decode_offset()` helper. The `/teams` (no `user_id`) branch is untouched.
+
+- **Scope**: confined to this one function's `user_id` branch plus one new pure helper; response shape (`count`/`teams`/`has_more`/`next_page_token`), tool signature, and every other tool are unchanged — matches Tech design addendum D1 (`docs/tickets/PRD-22034-r2.md`) and does not reopen AC1/AC2/AC9.
+- **Correctness**: `_decode_offset` clamps a missing, blank, non-numeric, or negative token to `0` instead of raising, so a stray `/teams`-style `$skiptoken` value accidentally round-tripped on this branch degrades to "restart from page 0" rather than a 500 — reasonable for an opaque, caller-owned token. `has_more`/`next_page_token` are computed from the post-filter list length (filter-then-slice, in that order), so the pagination contract holds across repeated calls as long as the caller keeps `name_prefix` constant across a given pagination sequence — the same caller-contract assumption the pre-existing `/teams` branch already makes for its own `$filter`. No infinite-loop or off-by-one risk found (`next_offset = offset + page_size`; `has_more = next_offset < len(teams)` — correct for `len(teams)` a multiple of `page_size` too, verified by the all-filtered-out edge case: `len(teams) == 0` → `has_more=False`, `next_page_token=None`).
+- **Tests**: two new cases (`test_list_teams_by_user_id_omits_top_and_skiptoken`, `test_list_teams_by_user_id_paginates_client_side`) assert the outgoing request shape directly (no `$top`/`$skiptoken` recorded for any `page_size`) and a two-page client-side pagination end to end; `TC-TEAMS-016` in `docs/tickets/PRD-22034.ac.json` documents both, sourced from the production error. All 15 round-1 cases were re-run this round per the doc's stated rework discipline, not just the new one — none regressed.
+- **Credentials/isolation**: no change to how `GraphClient`/tokens are obtained, scoped, or request-isolated; nothing new is logged or persisted.
+- **Docs**: `docs/tickets/PRD-22034-r2.md` (English only) adds Rework triage + Tech design addendum D1 + Test cases addendum, consistent with the code change; `docs/tickets/PRD-22034.md` gets a one-line "Superseded by PRD-22034-r2.md" notice, otherwise untouched (frozen main doc not reopened, per `legs/dev.md` S1). No new CJK: `grep -rnP '[\x{4e00}-\x{9fff}]' --exclude-dir=.git --exclude-dir=.venv --exclude='PRD-*-review.md' .` from the repo root hits only other tickets' own pre-existing frozen design docs plus the same two already-accepted-as-non-blocking spots in `PRD-22034.md` itself (round 1/2's disposition, unchanged) — nothing in `teams.py`, `tests/test_tools.py`, or the new `PRD-22034-r2.md`.
+- **README Connector section**: not touched this round (no tool, scope, or external-contract change) — already verified byte-for-byte against `readme-connector-section.md` in round 2; nothing to re-check.
+- **GDAP role map / tool count**: unaffected (no new tool registered this round); `tests/test_gdap_role_map.py`'s `56`-count assertion is unchanged and still part of the passing suite below.
+
+Independently re-run (not just re-cited) this round:
+- `uv sync -q && uv run pytest -q` on `dev/PRD-22034 @ 08f184b` → **270 passed, 0 failed** — matches the Self-test's own number exactly (268-passed pre-fix baseline + 2 new tests this round, 0 regressions).
+
+### Fixes
+
+N/A — round 3 is an approval, no new must-fix to action.
+
+Status: frozen @ 08f184b
