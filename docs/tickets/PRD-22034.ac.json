@@ -226,5 +226,20 @@
     "expect": "The comment names the exact scopes and confirms they are least-sufficient.",
     "result": "pass",
     "evidence": "[DEV] comment (posted via mbp.py exit, which reads it back) states the scopes used: Team.ReadBasic.All for graph_list_teams, Channel.ReadBasic.All for graph_list_channels and graph_get_channel, and that these are the least scopes that pass AC1-AC7 -- no broader scope was requested."
+  },
+  {
+    "id": "TC-TEAMS-016",
+    "ac": "AC3",
+    "dw": "DW1",
+    "type": "auto",
+    "priority": "P0",
+    "source": "rework round 2, comment #1600390000061290",
+    "text": "Given user_id is set (with no name_prefix) and page_size smaller than the user's joined-teams count, When graph_list_teams(user_id=..., page_size=<N>) is called, Then it succeeds (no invalid_argument / \"Query option 'Top' is not allowed\" error), the recorded Graph request to /users/{user_id}/joinedTeams carries no $top and no $skiptoken, and has_more/next_page_token still behave correctly when pagination is applied client-side across two calls -- instead of failing on every user_id call as found in production (tenant 2qmxyw, 2026-11-10).",
+    "tests": [
+      "tests/test_tools.py::test_list_teams_by_user_id_omits_top_and_skiptoken",
+      "tests/test_tools.py::test_list_teams_by_user_id_paginates_client_side"
+    ],
+    "result": "untested",
+    "evidence": "pending dev leg fix (rework round 2, Tech design addendum D1) and test implementation"
   }
 ]
