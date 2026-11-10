@@ -5747,3 +5747,99 @@ async def test_send_channel_message_403_explains_delegated_scope_and_membership(
     assert result["error"]["required_scope"] == "ChannelMessage.Send"
     assert "app-only" in result["error"]["message"]
     assert "member" in result["error"]["message"]
+
+
+# --- PRD-22035 Done-when 8: an HTML body is sanitised before it is posted ----
+
+
+async def _send_html(body: str, **extra):
+    from graph_mcp.tools import teams
+
+    mcp, client = _register(
+        teams, result={"id": "m1"}, get_result={"id": "guid-1", "displayName": "Tim"}
+    )
+    args = {"team_id": "t1", "channel_id": "c1", "body": body, "body_content_type": "html", **extra}
+    result = json.loads((await mcp.call_tool("graph_send_channel_message", args))[0][0].text)
+    return result, client
+
+
+@pytest.mark.asyncio
+async def test_send_channel_message_html_strips_script_and_external_image():
+    result, client = await _send_html(
+        '<p>Alert</p><script>alert(1)</script><img src="https://example.com/x.png" alt="x">'
+    )
+    assert client.bodies[0]["body"] == {"contentType": "html", "content": "<p>Alert</p>"}
+    assert result["status"] == "sent"
+    assert result["removed"] == ["img", "script"]
+
+
+@pytest.mark.asyncio
+async def test_send_channel_message_html_drops_event_handlers_and_javascript_links():
+    result, client = await _send_html(
+        '<p onclick="steal()">Hi <a href="javascript:alert(1)">bad</a> '
+        '<a href="https://contoso.com/t/1" target="_blank" onmouseover="x()">ticket</a></p>'
+    )
+    assert client.bodies[0]["body"]["content"] == (
+        '<p>Hi <a>bad</a> <a href="https://contoso.com/t/1">ticket</a></p>'
+    )
+    assert result["removed"] == [
+        "attribute:href",
+        "attribute:onclick",
+        "attribute:onmouseover",
+        "attribute:target",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_send_channel_message_html_keeps_formatting_and_escapes_text():
+    result, client = await _send_html(
+        "<p><b>Ticket</b> &lt;b&gt;quoted&lt;/b&gt; <i>x</i></p><ul><li>a &amp; b</li></ul><br>"
+    )
+    assert client.bodies[0]["body"]["content"] == (
+        "<p><b>Ticket</b> &lt;b&gt;quoted&lt;/b&gt; <i>x</i></p><ul><li>a &amp; b</li></ul><br>"
+    )
+    assert "removed" not in result
+
+
+@pytest.mark.asyncio
+async def test_send_channel_message_html_removes_content_of_style_iframe_and_svg():
+    result, client = await _send_html(
+        "<style>p{}</style><iframe src='https://evil'>fallback</iframe>"
+        "<svg><script>x</script></svg>Text"
+    )
+    assert client.bodies[0]["body"]["content"] == "Text"
+    assert result["removed"] == ["iframe", "style", "svg"]
+
+
+@pytest.mark.asyncio
+async def test_send_channel_message_html_body_cannot_forge_mention_tags():
+    """<at> tags are built by the tool only; a forged one in the body is
+    stripped (its text is kept) so it cannot break the mentions array."""
+    result, client = await _send_html(
+        '<at id="0">Everyone</at> hi', mention_user_ids=["tim@contoso.com"]
+    )
+    assert client.bodies[0]["body"]["content"] == '<p><at id="0">Tim</at></p>Everyone hi'
+    assert result["removed"] == ["at"]
+
+
+@pytest.mark.asyncio
+async def test_send_channel_message_refuses_body_that_is_empty_after_sanitising():
+    result, client = await _send_html(
+        '<script>alert(1)</script><img src="https://example.com/x.png">'
+    )
+    assert result["error"]["code"] == "invalid_argument"
+    assert result["error"]["removed"] == ["img", "script"]
+    assert client.methods == []
+
+
+@pytest.mark.asyncio
+async def test_send_channel_message_text_body_is_not_sanitised():
+    """A plain-text body is shown as text by Teams; it is sent unchanged."""
+    from graph_mcp.tools import teams
+
+    mcp, client = _register(teams, result={"id": "m1"})
+    await mcp.call_tool(
+        "graph_send_channel_message",
+        {"team_id": "t1", "channel_id": "c1", "body": "<img src=x> <b>y</b>"},
+    )
+    assert client.bodies[0]["body"] == {"contentType": "text", "content": "<img src=x> <b>y</b>"}
