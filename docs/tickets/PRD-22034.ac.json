@@ -251,10 +251,10 @@
     "priority": "P0",
     "source": "rework round 3, QA-NIGHT FAIL #315, comment #1600390000067357 FIND1",
     "tests": [
-      "tests/test_tools.py::test_missing_scope_error_reports_access_denied_when_token_already_has_scope"
+      "tests/test_tools.py::test_403_is_access_denied_not_missing_scope_when_scp_already_covers_it"
     ],
-    "result": "untested",
-    "evidence": "added this round; dev leg implements and runs (red/green)."
+    "result": "pass",
+    "evidence": "dev round 3: parametrized across all three tools (graph_list_teams/graph_list_channels/graph_get_channel) with a synthetic scp-claim JWT; `uv run pytest -k access_denied_not_missing_scope` 2026-11-11, 3 passed."
   },
   {
     "id": "TC-TEAMS-018",
@@ -265,10 +265,10 @@
     "priority": "P0",
     "source": "rework round 3, QA-NIGHT FAIL #315, comment #1600390000067357 FIND1",
     "tests": [
-      "tests/test_tools.py::test_missing_scope_error_reports_access_denied_when_token_already_has_scope"
+      "tests/test_tools.py::test_403_is_access_denied_not_missing_scope_when_roles_already_covers_it"
     ],
-    "result": "untested",
-    "evidence": "added this round; dev leg implements and runs (red/green)."
+    "result": "pass",
+    "evidence": "dev round 3: same assertion with an app-only roles-claim JWT; `uv run pytest -k access_denied_not_missing_scope` 2026-11-11, passed."
   },
   {
     "id": "TC-TEAMS-019",
@@ -279,10 +279,12 @@
     "priority": "P0",
     "source": "rework round 3 regression guard for AC8, QA-NIGHT FAIL #315, comment #1600390000067357 FIND1",
     "tests": [
-      "tests/test_tools.py::test_missing_scope_error_still_reports_missing_scope_when_token_cannot_be_read"
+      "tests/test_tools.py::test_list_teams_names_missing_scope_on_403",
+      "tests/test_tools.py::test_list_channels_names_missing_scope_on_403",
+      "tests/test_tools.py::test_get_channel_names_missing_scope_on_403"
     ],
-    "result": "untested",
-    "evidence": "added this round; dev leg implements and runs (red/green)."
+    "result": "pass",
+    "evidence": "dev round 3: no new test needed -- per the r3 Test strategy, _ForbiddenGetClient's new token param defaults to \"\" (not a well-formed JWT), so _granted_scopes returns None and these three existing AC8 tests keep asserting missing_scope unchanged; re-run 2026-11-11, 3 passed."
   },
   {
     "id": "TC-TEAMS-020",
@@ -293,10 +295,10 @@
     "priority": "P1",
     "source": "rework round 3, QA-NIGHT FAIL #315, comment #1600390000067357 FIND2",
     "tests": [
-      "tests/test_tools.py::test_list_channels_sends_prefer_include_unknown_enum_members_header"
+      "tests/test_tools.py::test_list_channels_sends_prefer_include_unknown_enum_members"
     ],
-    "result": "untested",
-    "evidence": "added this round; dev leg implements and runs (red/green)."
+    "result": "pass",
+    "evidence": "dev round 3: `uv run pytest -k sends_prefer_include_unknown_enum_members` 2026-11-11, passed -- asserts extra_headers == {'Prefer': 'include-unknown-enum-members'} on the /teams/{id}/channels GET."
   },
   {
     "id": "TC-TEAMS-021",
@@ -307,10 +309,10 @@
     "priority": "P1",
     "source": "rework round 3, QA-NIGHT FAIL #315, comment #1600390000067357 FIND2",
     "tests": [
-      "tests/test_tools.py::test_get_channel_sends_prefer_include_unknown_enum_members_header"
+      "tests/test_tools.py::test_get_channel_sends_prefer_include_unknown_enum_members"
     ],
-    "result": "untested",
-    "evidence": "added this round; dev leg implements and runs (red/green)."
+    "result": "pass",
+    "evidence": "dev round 3: `uv run pytest -k sends_prefer_include_unknown_enum_members` 2026-11-11, passed -- same header asserted on the /teams/{id}/channels/{channel_id} GET."
   },
   {
     "id": "TC-TEAMS-022",
