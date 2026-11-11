@@ -1,3 +1,5 @@
+import base64
+import json
 from urllib.parse import parse_qs, urlsplit
 
 from .._json import error_envelope
@@ -8,14 +10,65 @@ NO_TOKEN = error_envelope(
 )
 
 
-def missing_scope_error(e: GraphError, scope: str) -> str:
+def _decode_jwt_claims(token: str) -> dict | None:
+    """Decode an Azure AD access token's claims without verifying its
+    signature (PRD-22034 D2) -- Graph already validated the token before
+    this connector ever saw it; this only needs to read what it was
+    granted. Returns None for anything that is not a well-formed 3-part
+    JWT, or whose payload segment is not a JSON object.
+    """
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+    payload = parts[1]
+    padded = payload + "=" * (-len(payload) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode(padded.encode("ascii"))
+        claims = json.loads(decoded)
+    except Exception:
+        return None
+    return claims if isinstance(claims, dict) else None
+
+
+def _granted_scopes(token: str) -> set[str] | None:
+    """The Graph permissions `token` actually carries (PRD-22034 D2):
+    space-separated in `scp` for a delegated token, a list of strings in
+    `roles` for an app-only/client-credentials token. None means "could
+    not tell" (not a well-formed JWT, or neither claim present) -- callers
+    must treat None as "assume nothing granted", never as "assume granted".
+    """
+    claims = _decode_jwt_claims(token)
+    if claims is None:
+        return None
+    scp = claims.get("scp")
+    if isinstance(scp, str):
+        return set(scp.split())
+    roles = claims.get("roles")
+    if isinstance(roles, list):
+        return {r for r in roles if isinstance(r, str)}
+    return None
+
+
+def missing_scope_error(e: GraphError, scope: str, client: GraphClient) -> str:
     """Turn a 403 into an error that names the Graph permission this tool
     needs, instead of Graph's generic "Insufficient privileges" message
     (PRD-22034 Done-when 4). Every other status code keeps today's
     behavior (e.to_envelope()) -- this only changes what a tenant without
     consent for `scope` sees.
+
+    PRD-22034 rework (r3, D2/AC12): a 403 is only reported as missing_scope
+    when the caller's own token does not already carry `scope` -- a 403 for
+    any other reason (e.g. the resource belongs to another tenant) with the
+    scope already granted gets Graph's normal "access denied" envelope
+    instead. If the token's granted scopes can't be determined, this still
+    defaults to missing_scope (today's behavior, AC8) -- the fix only
+    narrows the cases that were wrong, it never produces a new false
+    negative.
     """
     if e.status_code == 403:
+        granted = _granted_scopes(client.token)
+        if granted is not None and scope in granted:
+            return e.to_envelope()
         return error_envelope(
             "missing_scope",
             f"This tool needs the Microsoft Graph permission {scope}. "

@@ -75,6 +75,13 @@ class GraphClient:
         self._token = access_token
         self._base_url = base_url.rstrip("/")
 
+    @property
+    def token(self) -> str:
+        """The caller's own bearer token, read-only (PRD-22034 D2) -- lets
+        _common.py tell a genuinely missing scope apart from a 403 for any
+        other reason, without reaching into a private attribute."""
+        return self._token
+
     def _headers(self) -> dict[str, str]:
         return {
             "Authorization": f"Bearer {self._token}",
