@@ -5396,10 +5396,28 @@ async def test_create_invitation_unauthorized_token_hits_backend():
 
 class _ForbiddenGetClient:
     """GET always raises a 403 -- stands in for a tenant that has not
-    consented to the Graph scope a Teams tool needs."""
+    consented to the Graph scope a Teams tool needs.
+
+    PRD-22034 rework (r3, D2): `token` defaults to "" (not a well-formed
+    JWT), so the existing AC8 tests below keep asserting missing_scope with
+    no edit -- `_granted_scopes("")` returns None, and None must default to
+    missing_scope, not "assume granted".
+    """
+
+    def __init__(self, token: str = ""):
+        self.token = token
 
     async def get(self, path: str, params=None, extra_headers=None):
         raise GraphError(403, "Authorization_RequestDenied: Insufficient privileges")
+
+
+def _fake_jwt(**claims) -> str:
+    """A synthetic, unsigned 3-part JWT carrying `claims` in its payload --
+    enough for _decode_jwt_claims to read (PRD-22034 D2 tests); never meant
+    to pass real signature verification."""
+    header = base64.urlsafe_b64encode(b'{"alg":"none"}').rstrip(b"=").decode("ascii")
+    payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).rstrip(b"=").decode("ascii")
+    return f"{header}.{payload}.sig"
 
 
 @pytest.mark.asyncio
@@ -5550,6 +5568,85 @@ async def test_get_channel_names_missing_scope_on_403():
     assert result["error"]["code"] == "missing_scope"
     assert result["error"]["retryable"] is False
     assert result["error"]["missing_scope"] == "Channel.ReadBasic.All"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tool,args,scope",
+    [
+        ("graph_list_teams", {}, "Team.ReadBasic.All"),
+        ("graph_list_channels", {"team_id": "t1"}, "Channel.ReadBasic.All"),
+        ("graph_get_channel", {"team_id": "t1", "channel_id": "c1"}, "Channel.ReadBasic.All"),
+    ],
+)
+async def test_403_is_access_denied_not_missing_scope_when_scp_already_covers_it(
+    tool, args, scope
+):
+    """TC-TEAMS-017/AC12: a 403 with a delegated token whose `scp` claim
+    already carries the scope the failing tool needs must come back as
+    Graph's own "unauthorized" envelope, not missing_scope -- consent is
+    already granted, so the 403 has another cause (PRD-22034 r3, FIND1)."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import teams
+
+    mcp = FastMCP(name="test")
+    token = _fake_jwt(scp=f"{scope} Mail.Read")
+    teams.register(mcp, lambda: _ForbiddenGetClient(token=token))
+
+    result = json.loads((await mcp.call_tool(tool, args))[0][0].text)
+    assert result["error"]["code"] == "unauthorized"
+    assert "missing_scope" not in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_403_is_access_denied_not_missing_scope_when_roles_already_covers_it():
+    """TC-TEAMS-018/AC12: same as TC-TEAMS-017, but the token is an
+    app-only/client-credentials token carrying the scope in `roles`
+    instead of `scp` -- covers the ms-graph-app connector."""
+    from mcp.server.fastmcp import FastMCP
+
+    from graph_mcp.tools import teams
+
+    mcp = FastMCP(name="test")
+    token = _fake_jwt(roles=["Team.ReadBasic.All", "Mail.Read"])
+    teams.register(mcp, lambda: _ForbiddenGetClient(token=token))
+
+    result = json.loads((await mcp.call_tool("graph_list_teams", {}))[0][0].text)
+    assert result["error"]["code"] == "unauthorized"
+    assert "missing_scope" not in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_list_channels_sends_prefer_include_unknown_enum_members():
+    """TC-TEAMS-020/AC5: graph_list_channels must send
+    `Prefer: include-unknown-enum-members` so an evolvable membershipType
+    value (e.g. "shared") isn't reported as unknownFutureValue (PRD-22034
+    r3, FIND2)."""
+    from graph_mcp.tools import teams
+
+    mcp, client = _register(teams, result={"value": []})
+    await mcp.call_tool("graph_list_channels", {"team_id": "t1"})
+    assert client.headers[-1] == {"Prefer": "include-unknown-enum-members"}
+
+
+@pytest.mark.asyncio
+async def test_get_channel_sends_prefer_include_unknown_enum_members():
+    """TC-TEAMS-021/AC6: same as TC-TEAMS-020, for graph_get_channel."""
+    from graph_mcp.tools import teams
+
+    mcp, client = _register(
+        teams,
+        result={
+            "id": "c1",
+            "displayName": "General",
+            "membershipType": "shared",
+            "webUrl": "https://teams.microsoft.com/l/channel/c1",
+            "isArchived": False,
+        },
+    )
+    await mcp.call_tool("graph_get_channel", {"team_id": "t1", "channel_id": "c1"})
+    assert client.headers[-1] == {"Prefer": "include-unknown-enum-members"}
 
 
 @pytest.mark.asyncio

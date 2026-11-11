@@ -175,7 +175,7 @@ def register(mcp: FastMCP, client_factory: Callable[[], GraphClient | None]) -> 
                     f"/users/{user_id}/joinedTeams", params={"$select": _TEAM_SELECT}
                 )
             except GraphError as e:
-                return missing_scope_error(e, "Team.ReadBasic.All")
+                return missing_scope_error(e, "Team.ReadBasic.All", client)
 
             teams = result.get("value", []) if isinstance(result, dict) else []
             if name_prefix:
@@ -208,7 +208,7 @@ def register(mcp: FastMCP, client_factory: Callable[[], GraphClient | None]) -> 
         try:
             result = await client.get("/teams", params=params)
         except GraphError as e:
-            return missing_scope_error(e, "Team.ReadBasic.All")
+            return missing_scope_error(e, "Team.ReadBasic.All", client)
 
         teams = result.get("value", []) if isinstance(result, dict) else []
         next_token = skiptoken(result.get("@odata.nextLink")) if isinstance(result, dict) else None
@@ -227,7 +227,7 @@ def register(mcp: FastMCP, client_factory: Callable[[], GraphClient | None]) -> 
         membership_type: Annotated[
             Literal["standard", "private", "shared"] | None,
             Field(
-                description="Return only channels of this type. Omit for Graph's default (standard channels only -- private/shared channels only appear when explicitly filtered)."
+                description="Return only channels of this type. Omit to return channels of every type (standard, private and shared) the caller can see."
             ),
         ] = None,
     ) -> str:
@@ -247,9 +247,13 @@ def register(mcp: FastMCP, client_factory: Callable[[], GraphClient | None]) -> 
             params["$filter"] = f"membershipType eq '{membership_type}'"
 
         try:
-            result = await client.get(f"/teams/{team_id}/channels", params=params)
+            result = await client.get(
+                f"/teams/{team_id}/channels",
+                params=params,
+                extra_headers={"Prefer": "include-unknown-enum-members"},
+            )
         except GraphError as e:
-            return missing_scope_error(e, "Channel.ReadBasic.All")
+            return missing_scope_error(e, "Channel.ReadBasic.All", client)
 
         channels = result.get("value", []) if isinstance(result, dict) else []
         return dump_json_capped(
@@ -280,9 +284,10 @@ def register(mcp: FastMCP, client_factory: Callable[[], GraphClient | None]) -> 
             result = await client.get(
                 f"/teams/{team_id}/channels/{channel_id}",
                 params={"$select": _CHANNEL_DETAIL_SELECT},
+                extra_headers={"Prefer": "include-unknown-enum-members"},
             )
         except GraphError as e:
-            return missing_scope_error(e, "Channel.ReadBasic.All")
+            return missing_scope_error(e, "Channel.ReadBasic.All", client)
 
         return dump_json_capped(
             {

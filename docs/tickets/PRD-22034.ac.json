@@ -241,5 +241,111 @@
     ],
     "result": "pass",
     "evidence": "uv run pytest tests/test_tools.py::test_list_teams_by_user_id_omits_top_and_skiptoken tests/test_tools.py::test_list_teams_by_user_id_paginates_client_side -v -> 2 passed (dev/PRD-22034 @ 1511203 + uncommitted rework r2 fix: src/graph_mcp/tools/teams.py user_id branch now calls /users/{id}/joinedTeams with only $select and paginates client-side via new _decode_offset() helper; verified the recorded request carries neither $top nor $skiptoken and that next_page_token correctly drives a second client-side page)"
+  },
+  {
+    "id": "TC-TEAMS-017",
+    "ac": "AC12",
+    "dw": "DW4",
+    "text": "Given a fake GraphClient whose token is a synthetic delegated-token JWT carrying scp that includes the tool's required scope, and whose GET raises GraphError(403, ...), When any of the three tools is called, Then the response is error.code == \"unauthorized\" (Graph's own message passed through), not missing_scope.",
+    "type": "auto",
+    "priority": "P0",
+    "source": "rework round 3, QA-NIGHT FAIL #315, comment #1600390000067357 FIND1",
+    "tests": [
+      "tests/test_tools.py::test_403_is_access_denied_not_missing_scope_when_scp_already_covers_it"
+    ],
+    "result": "pass",
+    "evidence": "dev round 3: parametrized across all three tools (graph_list_teams/graph_list_channels/graph_get_channel) with a synthetic scp-claim JWT; `uv run pytest -k access_denied_not_missing_scope` 2026-11-11, 3 passed."
+  },
+  {
+    "id": "TC-TEAMS-018",
+    "ac": "AC12",
+    "dw": "DW4",
+    "text": "Same as TC-TEAMS-017, but the fake token is an app-only JWT carrying the scope in roles instead of scp -- same assertion, covering the ms-graph-app connector.",
+    "type": "auto",
+    "priority": "P0",
+    "source": "rework round 3, QA-NIGHT FAIL #315, comment #1600390000067357 FIND1",
+    "tests": [
+      "tests/test_tools.py::test_403_is_access_denied_not_missing_scope_when_roles_already_covers_it"
+    ],
+    "result": "pass",
+    "evidence": "dev round 3: same assertion with an app-only roles-claim JWT; `uv run pytest -k access_denied_not_missing_scope` 2026-11-11, passed."
+  },
+  {
+    "id": "TC-TEAMS-019",
+    "ac": "AC8",
+    "dw": "DW4",
+    "text": "Given the fake GraphClient's token is empty (not a well-formed JWT) and GET raises GraphError(403, ...), When any of the three tools is called, Then the response is still error.code == \"missing_scope\" naming the scope -- confirms the fix does not weaken AC8 when the token cannot be read.",
+    "type": "auto",
+    "priority": "P0",
+    "source": "rework round 3 regression guard for AC8, QA-NIGHT FAIL #315, comment #1600390000067357 FIND1",
+    "tests": [
+      "tests/test_tools.py::test_list_teams_names_missing_scope_on_403",
+      "tests/test_tools.py::test_list_channels_names_missing_scope_on_403",
+      "tests/test_tools.py::test_get_channel_names_missing_scope_on_403"
+    ],
+    "result": "pass",
+    "evidence": "dev round 3: no new test needed -- per the r3 Test strategy, _ForbiddenGetClient's new token param defaults to \"\" (not a well-formed JWT), so _granted_scopes returns None and these three existing AC8 tests keep asserting missing_scope unchanged; re-run 2026-11-11, 3 passed."
+  },
+  {
+    "id": "TC-TEAMS-020",
+    "ac": "AC5",
+    "dw": "DW2",
+    "text": "Given a fake GraphClient, When graph_list_channels(team_id=...) is called (with or without membership_type), Then the recorded GET call to /teams/{team_id}/channels carries extra_headers={\"Prefer\": \"include-unknown-enum-members\"}.",
+    "type": "auto",
+    "priority": "P1",
+    "source": "rework round 3, QA-NIGHT FAIL #315, comment #1600390000067357 FIND2",
+    "tests": [
+      "tests/test_tools.py::test_list_channels_sends_prefer_include_unknown_enum_members"
+    ],
+    "result": "pass",
+    "evidence": "dev round 3: `uv run pytest -k sends_prefer_include_unknown_enum_members` 2026-11-11, passed -- asserts extra_headers == {'Prefer': 'include-unknown-enum-members'} on the /teams/{id}/channels GET."
+  },
+  {
+    "id": "TC-TEAMS-021",
+    "ac": "AC6",
+    "dw": "DW3",
+    "text": "Same as TC-TEAMS-020 for graph_get_channel's GET call to /teams/{team_id}/channels/{channel_id}.",
+    "type": "auto",
+    "priority": "P1",
+    "source": "rework round 3, QA-NIGHT FAIL #315, comment #1600390000067357 FIND2",
+    "tests": [
+      "tests/test_tools.py::test_get_channel_sends_prefer_include_unknown_enum_members"
+    ],
+    "result": "pass",
+    "evidence": "dev round 3: `uv run pytest -k sends_prefer_include_unknown_enum_members` 2026-11-11, passed -- same header asserted on the /teams/{id}/channels/{channel_id} GET."
+  },
+  {
+    "id": "TC-TEAMS-022",
+    "ac": "AC5",
+    "dw": "DW2",
+    "text": "Given the known test team's shared channel (INT test tenant 2qmxyw, channel ceshi--3 per QA's repro), When graph_list_channels(team_id=<known team>, membership_type=\"shared\") is called after the fix, Then the returned channel's membershipType is the literal string \"shared\", not \"unknownFutureValue\".",
+    "type": "manual",
+    "priority": "P1",
+    "precond": "needs a real vendor account: INT test tenant 2qmxyw, Graph tenant 151b79b6, team testgroup, shared channel ceshi--3 (per comment #1600390000067357).",
+    "steps": [
+      "Obtain a Graph access token for the INT test tenant.",
+      "Call graph_list_channels(team_id=<testgroup's id>, membership_type=\"shared\").",
+      "Read the returned channel's membershipType field."
+    ],
+    "expect": "membershipType is \"shared\", not \"unknownFutureValue\".",
+    "result": "untested",
+    "evidence": "needs a real vendor account -- not available in this environment; not a blocker per references/mcp-track.md S2.5/S3."
+  },
+  {
+    "id": "TC-TEAMS-023",
+    "ac": "AC6",
+    "dw": "DW3",
+    "text": "Same as TC-TEAMS-022 via graph_get_channel on that same shared channel's id.",
+    "type": "manual",
+    "priority": "P1",
+    "precond": "needs a real vendor account: same as TC-TEAMS-022.",
+    "steps": [
+      "Obtain a Graph access token for the INT test tenant.",
+      "Call graph_get_channel(team_id=<testgroup's id>, channel_id=<ceshi--3's id>).",
+      "Read the returned membershipType field."
+    ],
+    "expect": "membershipType is \"shared\", not \"unknownFutureValue\".",
+    "result": "untested",
+    "evidence": "needs a real vendor account -- not available in this environment; not a blocker per references/mcp-track.md S2.5/S3."
   }
 ]
