@@ -1,6 +1,6 @@
 # PRD-22034 · Code review
 
-Status: frozen @ 08f184b
+Status: frozen @ 60f4b01
 
 ## Round 1 · 2026-11-09 · reviewed dev/PRD-22034 @ 11e5f8c (base 9d3291d)
 
@@ -88,4 +88,29 @@ Independently re-run (not just re-cited) this round:
 
 N/A — round 3 is an approval, no new must-fix to action.
 
-Status: frozen @ 08f184b
+## Round 4 · 2026-11-11 · reviewed dev/PRD-22034 @ 60f4b01 (base master @ a027933)
+
+Verdict: approved
+
+### Findings
+
+No must-fix found. This round (rework r3, per `docs/tickets/PRD-22034-r3.md`) is a requirement-change + implementation-error fix found by `[QA-NIGHT] FAIL on INT (QA run #315)` against a real tenant, not a new feature: it (1) adds AC12 — a 403 is only reported as `missing_scope` when the caller's own token does not already carry the needed Graph permission, instead of unconditionally on every 403 — and (2) fixes `graph_list_channels`/`graph_get_channel` to send `Prefer: include-unknown-enum-members` so a shared channel's `membershipType` reports `"shared"` instead of `unknownFutureValue`, plus corrects the `membership_type` parameter's doc string (the "no filter = standard only" claim was wrong).
+
+- **Scope**: `src/graph_mcp/api_client.py` (new read-only `token` property on `GraphClient`, additive), `src/graph_mcp/tools/_common.py` (`_decode_jwt_claims`/`_granted_scopes` helpers; `missing_scope_error` gains a `client` parameter), `src/graph_mcp/tools/teams.py` (all 4 `missing_scope_error(...)` call sites — lines 178, 211, 252/256, 284/288 — pass `client`; the two channel GET calls gain `extra_headers`; one `Field(description=...)` string corrected), `tests/test_tools.py` (`_ForbiddenGetClient` gains a `token` param defaulting to `""`, `_fake_jwt` helper, 6 new/parametrized tests). Matches Tech design addendum D2/D3. No tool signature, scope, or response-shape change; AC1-AC11 untouched.
+- **Correctness (D2/AC12)**: `missing_scope_error` only downgrades a 403 to the pre-existing generic `e.to_envelope()` (`code == "unauthorized"`, reused verbatim — not a new error code, confirmed it is the same path every other tool in this connector already uses on non-403 errors, `grep -rn 'to_envelope()' src/graph_mcp/` across `calendar.py`/`devices.py`/`policies.py`/`sites.py`/etc.) when `_granted_scopes(client.token)` returns a set that **contains** the scope. `_granted_scopes` returns `None` (not an empty set) for an undecodable/absent-claims token, and `missing_scope_error` only branches away from `missing_scope` when the result is a set containing the scope — `None` and "set without the scope" both fall through to the unchanged `missing_scope` path. This preserves AC8 exactly: nothing this fix touches can turn a genuinely-missing-scope case into a false "unauthorized". `_decode_jwt_claims` never verifies a signature and doesn't need to — Graph already authenticated the token before this connector received it; this only reads what Graph already granted, so there is no new authorization decision here, only a more accurate error message for a Graph-side 403 that was going to be rejected either way.
+- **Correctness (D3/AC5,AC6)**: `extra_headers={"Prefer": "include-unknown-enum-members"}` added to both Graph GET calls via the pre-existing `extra_headers` plumbing on `GraphClient.get()` (already used by `users.py`, not a new mechanism). Does not touch filtering, pagination, or any other field — confirmed by reading the two call sites, no params logic changed besides this.
+- **Tests**: `TC-TEAMS-017`/`018` directly assert the 403-downgrade for both delegated (`scp`) and app-only (`roles`) tokens; `TC-TEAMS-019` confirms the AC8 regression guard (empty/undecodable token still yields `missing_scope`) via the existing three tests, unedited, now exercising the new default-`""` constructor path; `TC-TEAMS-020`/`021` assert the `Prefer` header is sent by both tools. All assert the actual changed behavior (outgoing request/response shape), not implementation internals. `TC-TEAMS-022`/`023` (real-tenant shared-channel confirmation) are correctly left `untested`/manual — not a blocker per `references/mcp-track.md` §3.
+- **Credentials/isolation**: `GraphClient.token` is a read-only property returning the same `_token` already held per-request; no new storage, no logging, no cross-request state. `_decode_jwt_claims`/`_granted_scopes` are pure functions on the string already in hand.
+- **Docs**: `docs/tickets/PRD-22034-r3.md` (English only) adds Product/Tech design addenda and Test cases addendum, consistent with the code; `docs/tickets/PRD-22034-r2.md` gets a one-line "Superseded by" notice, otherwise untouched (frozen, not reopened). `docs/tickets/PRD-22034.ac.json` validates clean: `ticket_store.py validate --require-dw` → `ledger OK: 23 cases`.
+- **CJK scan**: `grep -rnP '[\x{4e00}-\x{9fff}]' src/graph_mcp/api_client.py src/graph_mcp/tools/_common.py src/graph_mcp/tools/teams.py tests/test_tools.py README.md docs/gdap-role-map.yaml` — independently re-run by this review, zero hits.
+- **README Connector section**: not touched this round (`git diff origin/master...HEAD -- README.md` is empty, independently confirmed) — already verified byte-for-byte against `readme-connector-section.md` in round 2.
+- **GDAP role map / tool count**: unaffected, no new tool registered.
+
+Independently re-run (not just re-cited) this round:
+- `uv sync -q && uv run pytest -q` on `dev/PRD-22034 @ 60f4b01` → **276 passed, 0 failed** — matches the Self-test's own number exactly (270-passed pre-fix baseline + 6 new/parametrized tests this round, 0 regressions).
+
+### Fixes
+
+N/A — round 4 is an approval, no new must-fix to action.
+
+Status: frozen @ 60f4b01
